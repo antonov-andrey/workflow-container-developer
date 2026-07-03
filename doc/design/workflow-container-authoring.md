@@ -53,6 +53,10 @@ Workflow source получает browser runtime как готовый `MCP` URL
 
 Workflow source не должен запускать прямые `@playwright/mcp`, `npx`, OpenVPN или альтернативные browser/VPN launchers.
 
+Search queries должны выполняться через внутренний web search `Codex`, а не через browser runtime. `Codex` stage не должен открывать public search-engine result pages через Playwright `MCP`; browser runtime используется только для target source pages, выбранных из internal search results, site navigation, saved evidence или prompt context.
+
+Каждый browser-backed action stage result, который открывает target URLs, должен иметь schema-valid `browsing_error_list` с объектами `{url, error}`. В этот список записываются все URL, по которым stage получил network error, timeout, DNS/TLS error, HTTP blocker, CAPTCHA, bot-check, access-denied, redirect-loop или другой browser-visible отказ. Такие ошибки нельзя прятать только в screenshots, notes, evidence files или generic `error_list`.
+
 Browser tools могут записывать только browser evidence artifacts под объявленные browser evidence write directories, когда browser tool получает явный filename argument для snapshot, screenshot, download или другого browser-owned artifact.
 
 Browser page JavaScript должен быть чистым browser JavaScript, выполняемым через `browser_evaluate` или эквивалентный `page.evaluate` page context. Он может читать DOM, `window`, `document`, links, tables, visible text и browser-visible state, затем возвращать serializable data. Browser page JavaScript не должен использовать `browser_run_code_unsafe`, Node.js APIs, CommonJS или Node module systems, dynamic `import(...)`, `node:` modules, `fs`, `path`, `process`, `Buffer` или local filesystem access.
