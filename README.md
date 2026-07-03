@@ -1,0 +1,27 @@
+# workflow-container-developer
+
+Developer workspace and reusable authoring contract for workflow-container projects located beside this repository.
+
+```text
+/home/andrey/Projects/
+  workflow-container-developer/
+  brand-size-chart/
+  browser-vpn-runtime/
+  marketplace-automation/
+  <other-workflow-container>/
+```
+
+The project provides generic CLI tools. Concrete workflow logic stays in the target workflow-container project.
+
+## Commands
+
+```bash
+workflow-container-dev --help
+```
+
+## Development
+
+```bash
+python -m pytest -q
+python -m compileall workflow_container_developer
+```
