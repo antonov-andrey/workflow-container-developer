@@ -28,7 +28,11 @@ def main(argv: list[str] | None = None) -> int:
 
     finder = WorkflowContainerProjectFinder(developer_path=args.developer_path)
     if args.command == "audit":
-        project = finder.project_get(args.target)
+        try:
+            project = finder.project_get(args.target)
+        except ValueError as error:
+            print(f"ERROR {error}")
+            return 1
         result = WorkflowContainerAudit(project=project).result_get()
         for warning in result.warning_list:
             print(f"WARNING {warning}")

@@ -97,3 +97,20 @@ def test_audit_result_success_for_valid_project(tmp_path: Path) -> None:
     assert result.is_ok
     assert result.error_list == []
     assert result.warning_list == []
+
+
+def test_audit_result_warns_for_prompt_markdown_outside_template_tree(tmp_path: Path) -> None:
+    """Warn when root prompt markdown duplicates template-owned prompts."""
+
+    target_path = _target_create(tmp_path)
+    prompt_path = target_path / "workflow_module" / "prompt"
+    prompt_path.mkdir(parents=True)
+    (prompt_path / "duplicate.md").write_text("# Duplicate\n", encoding="utf-8")
+    (prompt_path / "template").mkdir()
+    (prompt_path / "template" / "stage.md").write_text("# Stage\n", encoding="utf-8")
+
+    result = WorkflowContainerAudit(project=_target_project_get(target_path)).result_get()
+
+    assert result.is_ok
+    assert result.error_list == []
+    assert "Root-level prompt markdown files found; use template tree" in result.warning_list

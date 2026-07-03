@@ -51,6 +51,7 @@ class WorkflowContainerAudit:
         self._required_file_check(Path("versions.yaml"), error_list)
         self._required_file_check(Path("AGENTS.md"), error_list)
         self._design_check(error_list)
+        self._prompt_duplicate_check(warning_list)
         self._workflow_yaml_check(error_list)
         return WorkflowContainerAuditResult(error_list=error_list, warning_list=warning_list)
 
@@ -64,6 +65,18 @@ class WorkflowContainerAudit:
         design_path = self._project.path / "doc" / "design"
         if not design_path.is_dir() or not any(design_path.glob("*.md")):
             error_list.append("Missing doc/design/*.md")
+
+    def _prompt_duplicate_check(self, warning_list: list[str]) -> None:
+        """Warn about prompt markdown files outside the template tree.
+
+        Args:
+            warning_list: Audit warning output list.
+        """
+
+        for prompt_path in self._project.path.rglob("prompt"):
+            if prompt_path.is_dir() and any(prompt_path.glob("*.md")):
+                warning_list.append("Root-level prompt markdown files found; use template tree")
+                return
 
     def _required_file_check(self, relative_path: Path, error_list: list[str]) -> None:
         """Check for one required project file.

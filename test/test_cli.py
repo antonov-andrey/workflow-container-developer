@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-from workflow_container_developer.audit import WorkflowContainerAuditResult
 from workflow_container_developer.cli import main
 
 
@@ -51,38 +50,31 @@ def test_cli_audit_reports_success(tmp_path: Path, capsys) -> None:
     assert "OK sample-container" in captured.out
 
 
-def test_cli_audit_reports_warnings(tmp_path: Path, capsys, monkeypatch) -> None:
-    """Print warning output from generic audit results."""
+def test_cli_audit_reports_unknown_target(tmp_path: Path, capsys) -> None:
+    """Report unknown audit targets without traceback."""
 
     developer_path, _target_path = _target_create(tmp_path)
 
-    class AuditStub:
-        """Audit test double."""
+    assert main(["--developer-path", str(developer_path), "audit", "missing-container"]) == 1
 
-        def __init__(self, *, project: object) -> None:
-            """Initialize the audit test double.
+    captured = capsys.readouterr()
+    assert "ERROR Unknown workflow-container project: missing-container" in captured.out
 
-            Args:
-                project: Target project.
-            """
 
-            self._project = project
+def test_cli_audit_reports_warnings(tmp_path: Path, capsys) -> None:
+    """Print warning output from generic audit results."""
 
-        def result_get(self) -> WorkflowContainerAuditResult:
-            """Return a warning-only audit result.
-
-            Returns:
-                Warning-only audit result.
-            """
-
-            return WorkflowContainerAuditResult(warning_list=["Generic warning"])
-
-    monkeypatch.setattr("workflow_container_developer.cli.WorkflowContainerAudit", AuditStub)
+    developer_path, target_path = _target_create(tmp_path)
+    prompt_path = target_path / "workflow_module" / "prompt"
+    prompt_path.mkdir(parents=True)
+    (prompt_path / "duplicate.md").write_text("# Duplicate\n", encoding="utf-8")
+    (prompt_path / "template").mkdir()
+    (prompt_path / "template" / "stage.md").write_text("# Stage\n", encoding="utf-8")
 
     assert main(["--developer-path", str(developer_path), "audit", "sample-container"]) == 0
 
     captured = capsys.readouterr()
-    assert "WARNING Generic warning" in captured.out
+    assert "WARNING Root-level prompt markdown files found; use template tree" in captured.out
     assert "OK sample-container" in captured.out
 
 
