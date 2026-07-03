@@ -145,4 +145,43 @@ def test_audit_result_warns_for_prompt_markdown_outside_template_tree_with_path(
 
     assert result.is_ok
     assert result.error_list == []
-    assert "Root-level prompt markdown file found at workflow_module/prompt/duplicate.md; use template tree" in result.warning_list
+    assert (
+        "Root-level prompt markdown file found at workflow_module/prompt/duplicate.md; use template tree"
+        in result.warning_list
+    )
+
+
+def test_audit_result_warns_for_runtime_owned_codex_runner_copy(tmp_path: Path) -> None:
+    """Warn when a workflow container owns generic Codex runner implementation."""
+
+    target_path = _target_create(tmp_path)
+    runner_path = target_path / "workflow_module" / "codex" / "runner.py"
+    runner_path.parent.mkdir(parents=True)
+    runner_path.write_text("class CodexStageRunner:\n    pass\n", encoding="utf-8")
+
+    result = WorkflowContainerAudit(project=_target_project_get(target_path)).result_get()
+
+    assert result.is_ok
+    assert result.error_list == []
+    assert (
+        "Runtime-owned CodexStageRunner implementation found at workflow_module/codex/runner.py; "
+        "use workflow-container-runtime"
+    ) in result.warning_list
+
+
+def test_audit_result_warns_for_runtime_owned_prompt_partial_copy(tmp_path: Path) -> None:
+    """Warn when a workflow container copies runtime-owned prompt partials."""
+
+    target_path = _target_create(tmp_path)
+    partial_path = target_path / "workflow_module" / "prompt" / "template" / "partial"
+    partial_path.mkdir(parents=True)
+    (partial_path / "runtime_source_access.md.j2").write_text("Use browser\n", encoding="utf-8")
+
+    result = WorkflowContainerAudit(project=_target_project_get(target_path)).result_get()
+
+    assert result.is_ok
+    assert result.error_list == []
+    assert (
+        "Runtime-owned prompt partial found at "
+        "workflow_module/prompt/template/partial/runtime_source_access.md.j2; use workflow-container-runtime"
+    ) in result.warning_list

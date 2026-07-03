@@ -1,11 +1,18 @@
 # Workflow Container Authoring
 
 ## Назначение
-Этот документ владеет общим контрактом разработки workflow-container проектов. Он описывает, как писать `DBOS` workflow source, `Codex` stages, prompt templates, validators и artifacts. Runtime platform принадлежит `marketplace-automation`; browser/VPN runtime принадлежит `browser-vpn-runtime`; domain logic принадлежит каждому конкретному workflow-container project.
+Этот документ владеет общим контрактом разработки workflow-container проектов. Он описывает, как писать `DBOS` workflow source, `Codex` stages, prompt templates, validators и artifacts. Runtime platform принадлежит `marketplace-automation`; generic workflow-container runtime принадлежит `workflow-container-runtime`; browser/VPN runtime принадлежит `browser-vpn-runtime`; domain logic принадлежит каждому конкретному workflow-container project.
 
 Канонический путь этого контракта: `doc/design/workflow-container-authoring.md`.
 
 Конкретный workflow-container project может ссылаться на этот документ из своих инструкций и design-документов, но не должен зависеть от `workflow-container-developer` в production runtime, импортировать его product code или требовать его CLI для запуска workflow.
+
+## Runtime Package Boundary
+`workflow-container-runtime` владеет generic исполняемым runtime-кодом и generic prompt resources, которые нужны workflow-container проектам в production runtime: `Codex` subprocess runner, JSON schema output boundary, common prompt renderer, common prompt partials, generic browser-tool event validation и generic artifact helpers.
+
+Конкретный workflow-container project должен подключать `workflow-container-runtime` как обычную pinned Python dependency. Он не должен копировать в свой код generic `CodexStageRunner`, generic `Codex` subprocess lifecycle, runtime-owned prompt partials или generic browser-tool validation. В конкретном workflow-container project остаются только domain workflow, domain schemas, domain validators, domain prompt templates, domain prompt partials и domain artifact semantics.
+
+`workflow-container-developer` может проверять наличие локальных копий runtime-owned файлов, но не является runtime dependency и не должен поставлять importable runtime code.
 
 ## `DBOS` Workflow Source
 `Workflow Source`, который использует `DBOS`, должен оформлять `workflow` и `step` владельцев как `@DBOS.dbos_class` классы с instance-method методами.

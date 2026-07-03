@@ -8,7 +8,6 @@ import yaml
 
 from workflow_container_developer.project import WorkflowContainerProject
 
-
 PROMPT_SCAN_IGNORED_DIRECTORY_NAME_SET = {
     ".git",
     ".mypy_cache",
@@ -24,6 +23,11 @@ PROMPT_SCAN_IGNORED_DIRECTORY_NAME_SET = {
     "test",
     "tests",
     "tmp",
+}
+RUNTIME_OWNED_PROMPT_PARTIAL_NAME_SET = {
+    "artifact_reference_contract.md.j2",
+    "runtime_source_access.md.j2",
+    "stage_verification_contract.md.j2",
 }
 
 
@@ -71,6 +75,7 @@ class WorkflowContainerAudit:
         self._required_file_check(Path("AGENTS.md"), error_list)
         self._design_check(error_list)
         self._prompt_duplicate_check(warning_list)
+        self._runtime_duplicate_check(warning_list)
         self._workflow_yaml_check(error_list)
         return WorkflowContainerAuditResult(error_list=error_list, warning_list=warning_list)
 
@@ -117,6 +122,40 @@ class WorkflowContainerAudit:
 
         if not (self._project.path / relative_path).is_file():
             error_list.append(f"Missing {relative_path}")
+
+    def _runtime_duplicate_check(self, warning_list: list[str]) -> None:
+        """Warn about workflow-container runtime-owned generic local copies.
+
+        Args:
+            warning_list: Audit warning output list.
+        """
+
+        for root, directory_name_list, filename_list in os.walk(self._project.path):
+            directory_name_list[:] = [
+                directory_name
+                for directory_name in sorted(directory_name_list)
+                if directory_name not in PROMPT_SCAN_IGNORED_DIRECTORY_NAME_SET
+            ]
+            root_path = Path(root)
+            for filename in sorted(filename_list):
+                path = root_path / filename
+                relative_path = path.relative_to(self._project.path)
+                if filename in RUNTIME_OWNED_PROMPT_PARTIAL_NAME_SET:
+                    warning_list.append(
+                        f"Runtime-owned prompt partial found at {relative_path}; use workflow-container-runtime"
+                    )
+                    continue
+                if filename != "runner.py":
+                    continue
+                try:
+                    source_text = path.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    continue
+                if "class CodexStageRunner" in source_text:
+                    warning_list.append(
+                        f"Runtime-owned CodexStageRunner implementation found at {relative_path}; "
+                        "use workflow-container-runtime"
+                    )
 
     def _workflow_yaml_check(self, error_list: list[str]) -> None:
         """Check generic workflow YAML structure.
