@@ -12,12 +12,20 @@ Before changing workflow contracts, prompt contracts, artifact layout, runtime b
 ## Workflow
 
 1. Identify the target repository from the current working directory and its files such as `workflow.yaml`, `versions.yaml`, `pyproject.toml`, `AGENTS.md`, and `doc/design/*.md`.
-2. Keep ownership boundaries intact:
+2. Before changing workflow contracts, prompt contracts, artifact layout, runtime boundaries, code quality rules, prompt templates, stage instructions, validator instructions, or recovery instructions, read `references/workflow-container-authoring.md`.
+3. Keep ownership boundaries intact:
    - concrete workflow domain logic stays in the target workflow-container project,
    - generic runtime code and generic prompt partials stay in `workflow-container-runtime`,
    - browser/VPN process launch and profile handling stay in `browser-vpn-runtime`,
    - developer-only guidance and audit tooling stay in this plugin/repository.
-3. Apply the code quality baseline from `references/workflow-container-authoring.md`.
-4. When the `workflow-container-developer` checkout is available, run `python -m workflow_container_developer.cli audit <target-project>` from that checkout root as a mechanical check. If the checkout is not available, use the reference document checklist directly.
+4. When writing or rewriting one workflow-container prompt or instruction artifact:
+   - identify the artifact role before writing it,
+   - choose the appropriate instruction form from `Prompt Authoring Contract`,
+   - write exact inputs, outputs, state boundaries, and terminal behavior when the artifact defines a boundary,
+   - write state transitions explicitly when the artifact contains retries, verification loops, blocked states, or recovery,
+   - persist significant structured data at the nearest stable boundary instead of relying on model memory,
+   - describe recovery next steps near the failure mode that triggers them,
+   - avoid broad suggestions when an exact action or transition is required.
+5. Do not require a fixed set of headings for every prompt. Require the instruction form that matches the prompt's role.
 
 Do not add `workflow-container-developer` as a production runtime dependency of a concrete workflow-container project.

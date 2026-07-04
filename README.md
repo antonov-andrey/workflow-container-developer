@@ -12,6 +12,8 @@ workflow-container-developer/
       .codex-plugin/
         plugin.json
       skills/
+        workflow-container-audit/
+          SKILL.md
         workflow-container-developer/
           SKILL.md
           references/
@@ -19,9 +21,9 @@ workflow-container-developer/
   workflow_container_developer/
 ```
 
-The marketplace name is `workflow-container-tools`. The installable plugin is `workflow-container-tools`. The current skill inside that plugin is `workflow-container-developer`. Future workflow-container skills should be added under the same plugin at `plugins/workflow-container-tools/skills/`.
+The marketplace name is `workflow-container-tools`. The installable plugin is `workflow-container-tools`. Current skills inside that plugin are `workflow-container-developer` and `workflow-container-audit`. Future workflow-container skills should be added under the same plugin at `plugins/workflow-container-tools/skills/`.
 
-The repository also contains optional Python CLI code for local audits while developing this plugin and adjacent workflow-container projects. Codex plugin installation does not install that Python CLI. Concrete workflow logic stays in the target workflow-container project.
+The repository also contains optional Python CLI helper code for local project discovery while developing this plugin and adjacent workflow-container projects. Codex plugin installation does not install that Python CLI. Concrete workflow logic stays in the target workflow-container project.
 
 ## Local Plugin Install
 
@@ -68,10 +70,11 @@ Run the CLI from the `workflow-container-developer` checkout root without instal
 ```bash
 python -m workflow_container_developer.cli --help
 python -m workflow_container_developer.cli list
-python -m workflow_container_developer.cli audit <workflow-container-project>
 ```
 
-The target name is the adjacent project directory name. The CLI discovers workflow-container projects by `workflow.yaml` and `versions.yaml`; it does not know concrete workflow names.
+The `list` command discovers adjacent workflow-container projects by `workflow.yaml` and `versions.yaml`; it does not know concrete workflow names.
+
+The Python CLI is only a local helper. Canonical workflow-container instruction review is the semantic `workflow-container-audit` skill, not the Python CLI.
 
 ## Development
 

@@ -12,7 +12,7 @@
 - This repository is a Codex plugin marketplace source named `workflow-container-tools`.
 - The installable plugin is `workflow-container-tools`.
 - Plugin skills live under `plugins/workflow-container-tools/skills/`.
-- The current skill inside that plugin is `workflow-container-developer`.
+- Current skills inside that plugin are `workflow-container-developer` and `workflow-container-audit`.
 - Add future workflow-container skills under the same plugin instead of creating another install path.
 
 ## Python
