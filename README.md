@@ -1,6 +1,6 @@
 # Workflow Container Developer
 
-`workflow-container-developer` is a Codex plugin marketplace source for workflow-container development tools.
+`workflow-container-developer` is a Codex plugin marketplace source for workflow-container authoring and audit skills.
 
 ```text
 workflow-container-developer/
@@ -79,7 +79,10 @@ The Python CLI is only a local helper for discovery. Canonical workflow-containe
 ## Development
 
 ```bash
+uv venv --python 3.14
+source .venv/bin/activate
+uv pip install -e ".[test]"
 python -m pytest -q
 python -m compileall workflow_container_developer
-python3 ~/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py plugins/workflow-container-tools
+python ~/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py plugins/workflow-container-tools
 ```

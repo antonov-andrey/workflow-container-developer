@@ -1,4 +1,4 @@
-"""Command line interface for workflow-container developer tooling."""
+"""Optional local discovery CLI for adjacent workflow-container projects."""
 
 import argparse
 from pathlib import Path
@@ -7,7 +7,7 @@ from workflow_container_developer.project import WorkflowContainerProjectFinder
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the workflow-container developer CLI.
+    """Run the optional local discovery CLI.
 
     Args:
         argv: Optional argument list for tests.
@@ -18,7 +18,6 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="python -m workflow_container_developer.cli")
     parser.add_argument("--developer-path", default=Path.cwd(), type=Path)
-    parser.add_argument("--version", action="version", version="workflow-container-developer cli 0.1.0")
     subparser = parser.add_subparsers(dest="command", required=True)
     subparser.add_parser("list")
     args = parser.parse_args(argv)

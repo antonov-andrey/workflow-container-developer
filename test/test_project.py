@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import workflow_container_developer.project
 from workflow_container_developer.project import WorkflowContainerProjectFinder
 
 
@@ -23,21 +24,6 @@ def _project_create(root: Path, name: str) -> Path:
     return project_path
 
 
-def test_project_get_rejects_unknown_target(tmp_path: Path) -> None:
-    """Reject target names that do not resolve to adjacent workflow-container projects."""
-
-    developer_path = tmp_path / "workflow-container-developer"
-    developer_path.mkdir()
-    finder = WorkflowContainerProjectFinder(developer_path=developer_path)
-
-    try:
-        finder.project_get("missing")
-    except ValueError as error:
-        assert "Unknown workflow-container project" in str(error)
-    else:
-        raise AssertionError("Expected ValueError")
-
-
 def test_project_list_get_finds_adjacent_workflow_container(tmp_path: Path) -> None:
     """Find projects through workflow markers without hardcoded names."""
 
@@ -49,3 +35,9 @@ def test_project_list_get_finds_adjacent_workflow_container(tmp_path: Path) -> N
     finder = WorkflowContainerProjectFinder(developer_path=developer_path)
 
     assert [project.path for project in finder.project_list_get()] == [target_path]
+
+
+def test_project_module_docstring_matches_scope() -> None:
+    """Keep project module documentation limited to current behavior."""
+
+    assert workflow_container_developer.project.__doc__ == "Workflow-container project discovery."

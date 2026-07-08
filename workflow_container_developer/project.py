@@ -1,4 +1,4 @@
-"""Workflow-container project discovery and command configuration."""
+"""Workflow-container project discovery."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,24 +24,6 @@ class WorkflowContainerProjectFinder:
 
         self._developer_path = developer_path.resolve()
         self._workspace_path = self._developer_path.parent
-
-    def project_get(self, name: str) -> WorkflowContainerProject:
-        """Return one adjacent workflow-container project by directory name.
-
-        Args:
-            name: Target project directory name.
-
-        Returns:
-            Matching workflow-container project.
-
-        Raises:
-            ValueError: No adjacent workflow-container project has that name.
-        """
-
-        for project in self.project_list_get():
-            if project.name == name:
-                return project
-        raise ValueError(f"Unknown workflow-container project: {name}")
 
     def project_list_get(self) -> list[WorkflowContainerProject]:
         """Return adjacent workflow-container projects sorted by name.

@@ -1,1 +1,1 @@
-"""Developer tooling for workflow-container projects."""
+"""Optional local discovery helpers for adjacent workflow-container projects."""

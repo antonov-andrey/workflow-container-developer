@@ -1,7 +1,7 @@
 {
   "name": "workflow-container-tools",
-  "version": "0.1.0+codex.20260707202159",
-  "description": "Codex skills for developing workflow-container projects.",
+  "version": "0.1.0+codex.20260708134344",
+  "description": "Codex skills for authoring and auditing workflow-container projects.",
   "author": {
     "name": "Andrey Antonov",
     "url": "https://github.com/antonov-andrey"
@@ -16,7 +16,7 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Workflow Container Tools",
-    "shortDescription": "Develop and audit workflow-container projects.",
+    "shortDescription": "Author and audit workflow-container projects.",
     "longDescription": "Workflow Container Tools provides Codex skills and references for authoring workflow-container projects with clear runtime boundaries, prompt contracts, artifact contracts, and code quality checks.",
     "developerName": "Andrey Antonov",
     "category": "Productivity",

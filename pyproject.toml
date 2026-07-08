@@ -5,11 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "workflow-container-developer"
 version = "0.1.0"
-description = "Codex plugin marketplace and generic tooling for workflow-container projects"
+description = "Codex plugin marketplace source for workflow-container authoring and audit skills with optional local discovery CLI"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = [
-  "PyYAML>=6.0.2",
+
+[project.optional-dependencies]
+test = [
   "pytest>=8.4.0",
 ]
 

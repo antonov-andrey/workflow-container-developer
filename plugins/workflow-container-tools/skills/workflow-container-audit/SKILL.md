@@ -31,47 +31,56 @@ Instruction-bearing artifacts include:
 
 ## Semantic Review Workflow
 
-For each artifact, first determine the artifact role:
+Use one audit order: role detection -> minimality review -> stage boundary review -> prompt refactor gate -> domain findings.
 
-- boundary contract;
-- workflow sequence;
-- FSM, retry, or recovery procedure;
-- generated or persisted data handling;
-- external-source handling;
-- verification or checking guidance.
+1. role detection: determine whether each artifact is a boundary contract, workflow sequence, FSM/retry/recovery procedure, generated or persisted data handler, external-source handler, verification guidance, or checking guidance.
+2. minimality review: apply `Minimality Review` before reporting domain-level wording or behavior findings.
+3. stage boundary review: apply `Stage Boundary Review` before domain details for Codex-backed workflow-container stages.
+4. prompt refactor gate: apply `Prompt Refactor Gate` before narrower domain findings for prompt templates.
+5. domain findings: report remaining role-specific semantic findings after the earlier gates. Use these role criteria:
+   - boundary contracts must make inputs, outputs, ownership, and forbidden behavior clear;
+   - stateful processes must have explicit states and transitions;
+   - linear procedures must have an unambiguous step sequence;
+   - significant structured data flow must have clear persistence boundaries;
+   - recovery must be deterministic where known errors can occur;
+   - instructions must not depend on model memory for durable handoff data;
+   - another agent must be able to execute the instruction consistently without hidden chat context.
 
-Then evaluate whether the instruction form is strong enough for that role:
+## Minimality Review
 
-- boundary contracts must make inputs, outputs, ownership, and forbidden behavior clear;
-- stateful processes must have explicit states and transitions;
-- linear procedures must have an unambiguous step sequence;
-- significant structured data flow must have clear persistence boundaries;
-- recovery must be deterministic where known errors can occur;
-- instructions must not depend on model memory for durable handoff data;
-- another agent must be able to execute the instruction consistently without hidden chat context.
+Before reporting domain-level wording or behavior findings, check the artifact against `Minimal Stable Contract` from `../workflow-container-developer/references/workflow-container-authoring.md`.
+
+Report a minimality finding when the artifact introduces or preserves:
+
+- two objects for one semantic concept;
+- mirrored fields across result, prompt context, private state, artifact handles, audit views, or DBOS handoff payloads;
+- duplicated status, error, message, note, priority, identity, path, applicability, or evidence channels;
+- prompt schema text that duplicates Pydantic models or mechanical validators;
+- validator logic that reconstructs the next handoff object instead of only validating the current boundary;
+- compatibility bridges, proxy layers, alias payloads, or translation layers that exist only to keep an older contract shape alive;
+- private stage state that later stages consume as public handoff data;
+- a new abstraction that does not remove duplication, stabilize one boundary, or simplify validation and recovery.
+
+The recommended fix must prefer simplification first: remove the duplicate field or object, reuse the existing stable model, move the data to the single owner, derive the value from an existing stable handle, or make one boundary the only source of truth. If simplification is impossible, the finding must propose the smallest idiomatic change that satisfies `KISS`, `DRY`, single source of truth and explicit ownership.
+
+Keep the finding scoped to the changed or directly affected boundary. Do not ask for unrelated broad refactoring unless the duplicated contract crosses that boundary and prevents a correct fix.
 
 ## Stage Boundary Review
 
-For Codex-backed workflow-container stages, audit the simple action and verification contract before domain details:
+For Codex-backed workflow-container stages, use `Codex Stage`, `Stage Lifecycle`, `Prompt Routing`, `DBOS Handoff`, `Durable Step Completion`, `JSON Payload Naming`, and `Artifact Materialization` from `../workflow-container-developer/references/workflow-container-authoring.md` as the stage-boundary source of truth. `Stage Lifecycle` owns only lifecycle order. Audit whether the artifact violates those owner sections or adds a second owner for one of their boundaries.
 
-- action stages return schema-valid JSON and write only explicitly declared generated artifacts or private stage-local state;
-- runtime writes `prompt_context.json`, `result.json`, and `verification.json` in the same stage directory;
-- verification stages return `StageVerificationResult` and do not write `verification.json` directly;
-- batch, retry, or resumable progress must be durable through declared stage artifacts or private stage-local `state.json` when separate state is needed;
-- later stages must not depend on a previous stage's private `state.json`;
-- stage-specific public state filenames are invalid;
-- action template names must be derived from `stage_key` as `{stage_key}.md.j2`;
-- verification template names must be derived from `stage_key` as `{stage_key}_verify.md.j2`;
-- runtime config must not expose template-name fields, a separate generic stage-instruction field, a separate generic shared-instruction field, or a generic state-path field;
-- verification results must contain only `status` and `feedback_list`, and must not own artifact namespaces, artifact lists, copied result payloads, or a second failure channel as the source of truth;
-- verification prompts must receive `stage_result_path` and require reading `result.json` from disk instead of receiving copied stage result JSON in prompt context;
-- mechanical validators must check paths, duplicates, required files, schema-adjacent invariants, and internal consistency before semantic verification, and must report failure by raising `RuntimeError`;
-- a mechanical validation failure must feed back to action without invoking semantic verification for that attempt;
-- semantic verification must check source or evidence correctness;
-- later stages must consume declared DBOS handoff payloads and declared artifacts without revalidating previous stage semantic correctness;
-- owner-controlled JSON payload names must use `_json`.
+Report a stage-boundary finding when one artifact:
 
-Report a finding when one instruction artifact defines a second public state file, asks a verifier to own artifact selection, duplicates Pydantic/schema checks as prompt text, omits durable declared artifacts or private state for retryable batch work, requires private `state.json` where declared stage artifacts already own durable progress, adds generic prompt channels outside typed prompt context, or introduces a custom stage runtime that should belong to `workflow-container-runtime`.
+- defines a second public state file or makes a later stage depend on a previous stage's private `state.json`;
+- asks an action stage, verification stage, prompt template, or domain wrapper to write `prompt_context.json`, `result.json`, or `verification.json`;
+- asks a verifier to own artifact selection, artifact namespaces, artifact lists, or a second failure channel;
+- duplicates Pydantic/schema checks, mechanical validator checks, or `Stage Lifecycle` ordering as prompt text;
+- routes runtime prompt paths differently from `Prompt Routing`, such as passing `stage_result_path` to an action prompt, `previous_stage_result_path` to a verification prompt, or any copied result channel named by `Prompt Routing` instead of runtime-owned path arguments;
+- omits any recovery-bundle member required by `Durable Step Completion`, including materialized external artifact tree files referenced by current stage data and required to rerun validation or verification after restart;
+- requires private `state.json` when declared stage artifacts already own durable progress;
+- adds generic prompt channels outside typed prompt context, such as template-name fields, generic shared instructions, generic stage instructions, or generic state-path fields;
+- introduces a custom stage runtime that should belong to `workflow-container-runtime`;
+- lets owner-controlled JSON payload names avoid the `_json` suffix.
 
 ## Prompt Refactor Gate
 
@@ -85,18 +94,9 @@ Do not bury a prompt-structure problem under narrower domain findings. If the pr
 
 If a clearer, more reliable, or more recoverable alternative formulation exists, report the current text as a finding. Do not accept weaker text only because it is syntactically valid or because a static checker would pass.
 
-## Finding Format
+## Finding Contract
 
 Each finding must be self-contained. The reader must be able to implement the fix without asking what artifact, fragment, failure mode, or rewrite target the finding meant.
-
-Each finding must state:
-
-- the concrete problem;
-- why the current text is weaker or ambiguous;
-- the rewrite direction or exact replacement when practical;
-- the artifact and fragment that must be rechecked after rewriting.
-
-## Finding Clarity Contract
 
 Each finding must include:
 
