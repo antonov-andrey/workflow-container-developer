@@ -67,17 +67,22 @@ Keep the finding scoped to the changed or directly affected boundary. Do not ask
 
 ## Stage Boundary Review
 
-For Codex-backed workflow-container stages, use `Codex Stage`, `Stage Lifecycle`, `Prompt Routing`, `DBOS Handoff`, `Durable Step Completion`, `JSON Payload Naming`, and `Artifact Materialization` from `../workflow-container-developer/references/workflow-container-authoring.md` as the stage-boundary source of truth. `Stage Lifecycle` owns only lifecycle order. Audit whether the artifact violates those owner sections or adds a second owner for one of their boundaries.
+For Codex-backed workflow-container stages, use `Codex Stage`, `Stage Lifecycle`, `Prompt Routing`, `DBOS Handoff`, `Durable Step Completion`, `JSON Payload Naming`, and `Artifact Materialization` from `../workflow-container-developer/references/workflow-container-authoring.md` as the stage-boundary source of truth. `Stage Lifecycle` owns the base-class lifecycle contract and its ordered file-writing flow. Audit whether the artifact violates those owner sections or adds a second owner for one of their boundaries.
 
 Report a stage-boundary finding when one artifact:
 
 - defines a second public state file or makes a later stage depend on a previous stage's private `state.json`;
-- asks an action stage, verification stage, prompt template, or domain wrapper to write `prompt_context.json`, `result.json`, or `verification.json`;
+- asks an action stage, verification stage, prompt template, or domain wrapper to write `input.json`, `result.json`, or `verification.json`;
+- concrete stages write `input.json`, `result.json`, or `verification.json` manually instead of using `WorkflowStepBase` or `WorkflowStepCodexBase`;
 - asks a verifier to own artifact selection, artifact namespaces, artifact lists, or a second failure channel;
 - duplicates Pydantic/schema checks, mechanical validator checks, or `Stage Lifecycle` ordering as prompt text;
+- prompts use `prompt_context_path`, copied result JSON, `draft_result_json`, or `previous_result_json` instead of `input_path`, `previous_stage_result_path`, and `stage_result_path`;
 - routes runtime prompt paths differently from `Prompt Routing`, such as passing `stage_result_path` to an action prompt, `previous_stage_result_path` to a verification prompt, or any copied result channel named by `Prompt Routing` instead of runtime-owned path arguments;
 - omits any recovery-bundle member required by `Durable Step Completion`, including materialized external artifact tree files referenced by current stage data and required to rerun validation or verification after restart;
 - requires private `state.json` when declared stage artifacts already own durable progress;
+- DBOS code reads a previous stage `state.json`;
+- a concrete stage has a second data shape for the same semantic object instead of one minimal stable object;
+- an implementation adds compatibility aliases for both prompt-context and input terminology;
 - adds generic prompt channels outside typed prompt context, such as template-name fields, generic shared instructions, generic stage instructions, or generic state-path fields;
 - introduces a custom stage runtime that should belong to `workflow-container-runtime`;
 - lets owner-controlled JSON payload names avoid the `_json` suffix.

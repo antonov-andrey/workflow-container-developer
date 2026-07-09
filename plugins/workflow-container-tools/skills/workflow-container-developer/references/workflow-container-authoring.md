@@ -85,46 +85,62 @@ Action output and artifacts: `Codex` action возвращает schema-valid JS
 
 Verification output: verification stage возвращает только minimal `StageVerificationResult` со `status` and `feedback_list`. Verification stage не владеет artifact list, artifact namespace, source-of-truth state или second failure channel. Successful verification payload is exactly `{"status": "success", "feedback_list": []}`. Verification failure возвращается как feedback в тот же action stage до достижения attempt limit. Отдельные fix stages запрещены.
 
-Input worklist and progress state: input worklists and input execution plans belong to typed `prompt_context.json`. Generated batch, retry или resumable progress должен быть durable через declared stage artifacts или через private `state.json`, когда отдельный state реально нужен. Generated domain meanings such as inventories, queues, or resumable item lists must be typed contents of declared stage artifacts or private `state.json`, not separate public state artifacts.
+Typed stage input: runtime config accepts one strict Pydantic `InputT` object. Runtime writes that object as `input.json`. Prompts read stage input from disk through `input_path`. Generic prompt fields such as `prompt_context`, `prompt_context_path`, `shared_instruction`, `stage_instruction`, or `stage_state_path` are forbidden at the runtime boundary; domain instruction fields belong inside the concrete `InputT`.
+
+Input worklist and progress state: input worklists and input execution plans belong to typed `InputT` in `input.json`. Generated batch, retry или resumable progress должен быть durable через declared stage artifacts или через private `state.json`, когда отдельный state реально нужен. Generated domain meanings such as inventories, queues, or resumable item lists must be typed contents of declared stage artifacts or private `state.json`, not separate public state artifacts.
 
 Private state boundary: `state.json`, когда он используется, является private state текущего stage и его validator. Следующий stage не должен зависеть от предыдущего `state.json`. Stage-specific public state filenames запрещены.
 
 Template naming: prompt каждого Codex-backed stage должен быть одним полным Jinja2 template-файлом. Имя action template должно быть `{stage_key}.md.j2`; имя verification template должно быть `{stage_key}_verify.md.j2`. Runtime config не должен принимать отдельные поля с именами template.
 
-Typed prompt context: runtime config должен принимать один strict `Pydantic` `prompt_context`. Global user instructions, stage-specific user instructions и stage-owned artifact paths должны быть частью typed prompt context конкретного workflow-container project. Prompts должны перечитывать prompt context с диска по `prompt_context_path`. Runtime не должен иметь отдельные generic поля вроде `shared_instruction`, `stage_instruction` или `stage_state_path`.
-
-Retry prompt inputs: retry data may be read only from typed prompt context, declared stage artifacts, optional private `state.json` in the current stage directory when this stage uses one, and runtime-provided retry paths owned by `Prompt Routing`. Runtime не должен добавлять другие generic retry-data channels в prompt context.
+Retry prompt inputs: retry data may be read only from typed `InputT`, declared stage artifacts, optional private `state.json` in the current stage directory when this stage uses one, and runtime-provided retry paths owned by `Prompt Routing`. Runtime не должен добавлять другие generic retry-data channels at the runtime boundary.
 
 Python prompt text placement: Python code не должен хранить human-readable stage instructions в multiline strings. Python code строит typed context и передает machine-facing values.
 
 ## Stage Lifecycle
 Порядок stage lifecycle фиксирован:
 
-1. Runtime writes typed `prompt_context.json`.
-2. Runtime запускает action stage и валидирует action output через JSON schema и Pydantic result model.
-3. Runtime materializes configured external artifact roots into the current stage directory.
-4. Only runtime writes `result.json` after successful schema/model validation and successful materialization of configured external artifact roots for the current attempt.
-5. Runtime запускает mechanical validator до semantic verification. Mechanical validators проверяют schema-adjacent invariants, paths, duplicates, required files и internal consistency. Mechanical validator returns `None` on success and raises `RuntimeError` with actionable feedback on failure.
-6. Если mechanical validation падает, runtime writes failed `verification.json` with that feedback and retries action without running semantic verification for that attempt.
-7. Runtime запускает semantic verification только после successful mechanical validation. Semantic verification checks current result correctness against prompt context, declared artifacts, and stage-relevant source/evidence when present.
-8. Runtime writes `verification.json` from semantic verification result.
+`WorkflowBase` owns workflow-level orchestration mechanics for one workflow family.
+
+`WorkflowStepBase[InputT, ResultT]` owns:
+
+- building and persisting `InputT` as `input.json`;
+- writing public `result.json` as the same `ResultT` returned by the DBOS step;
+- writing `verification.json`;
+- keeping `state.json` private to the current step;
+- exposing typed hook methods for concrete domain behavior.
+
+`WorkflowStepCodexBase[InputT, ActionOutputT, ResultT]` owns the Codex-backed lifecycle:
+
+1. prepare declared artifacts;
+2. build `InputT`;
+3. write `input.json`;
+4. run Codex action and validate `ActionOutputT`;
+5. build public `ResultT`;
+6. write `result.json`;
+7. run mechanical validation;
+8. run semantic verification;
+9. write `verification.json`;
+10. return `ResultT`.
+
+Only these base classes own the standard stage-file lifecycle. Concrete stages must not write `input.json`, `result.json`, or `verification.json` manually.
 
 ## Prompt Routing
 Runtime prompt routing:
 
-- first action attempt receives only `prompt_context_path`;
-- retry action attempt receives `prompt_context_path` and `previous_stage_result_path`, and must read previous `result.json` from disk when previous action result data is needed;
-- verification attempt receives `prompt_context_path` and `stage_result_path`, and must read current `result.json` from disk.
+- first action attempt receives `input_path`;
+- retry action attempt receives `input_path` and `previous_stage_result_path`;
+- verification attempt receives `input_path` and `stage_result_path`.
 
-Runtime must not pass `draft_result_json`, `previous_result_json`, copied action result JSON, or copied stage result JSON into either prompt. `result.json` принадлежит `Codex` action lifecycle.
+Runtime must not pass `prompt_context_path`, `draft_result_json`, `previous_result_json`, copied action result JSON, or copied stage result JSON into either prompt. `result.json` принадлежит `WorkflowStepBase` / `WorkflowStepCodexBase` lifecycle.
 
 ## DBOS Handoff
-Межшаговый `DBOS` handoff принадлежит successful step return после verified lifecycle и может быть Python-built payload, построенным из `result.json`, declared artifacts и prompt context. Следующий stage потребляет только такой declared handoff payload and declared artifacts; он не должен заново валидировать semantic correctness предыдущего stage.
+DBOS step handoff belongs to the successful step return after verified lifecycle. The next DBOS step input is built by workflow Python code from previous public result payloads, declared artifacts, and workflow parameters. A downstream step must never read a previous step `state.json`.
 
-A private `state.json` may be read only by the same stage owner after verified lifecycle to build declared handoff fields. Declared handoff payload must not include private state paths or private state contents, and must not require a downstream stage to read a previous `state.json`.
+A same-stage owner may read its private `state.json` only to derive declared public result fields or declared artifact references before returning `ResultT`.
 
 ## Durable Step Completion
-`DBOS` step считается завершенным только после durable записи полного recovery bundle: `prompt_context.json`, `result.json`, `verification.json`, declared stage-generated artifacts, optional private `state.json` in the current stage directory when this stage uses one, and materialized external artifact tree files referenced by current stage data and required to rerun validation or verification after restart.
+`DBOS` step считается завершенным только после durable записи полного recovery bundle: `input.json`, `result.json`, `verification.json`, declared stage-generated artifacts, optional private `state.json` in the current stage directory when this stage uses one, and materialized external artifact tree files referenced by current stage data and required to rerun validation or verification after restart.
 
 ## JSON Payload Naming
 Owner-controlled names for JSON payload values must use `_json`.

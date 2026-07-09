@@ -11,6 +11,8 @@ Use this skill for workflow-container ecosystem work. The ecosystem includes con
 
 1. Identify the target repository from the current working directory and its files such as `workflow.yaml`, `versions.yaml`, `pyproject.toml`, `AGENTS.md`, and `doc/design/*.md`.
 2. Before changing workflow contracts, prompt contracts, artifact layout, runtime boundaries, code quality rules, prompt templates, stage instructions, validator instructions, or recovery instructions, read `references/workflow-container-authoring.md`.
+   - Treat `input.json`, `input_path`, `WorkflowBase`, `WorkflowStepBase`, and `WorkflowStepCodexBase` as the current stage-file and class contract.
+   - Treat `prompt_context.json`, `prompt_context_path`, and prompt-context public-boundary terminology as obsolete except when documenting migration away from the old contract.
 3. Keep ownership boundaries intact:
    - concrete workflow domain logic stays in the target workflow-container project,
    - runtime-neutral workflow source models and loaders stay in `workflow-container-contract`,
@@ -19,7 +21,7 @@ Use this skill for workflow-container ecosystem work. The ecosystem includes con
    - developer-only guidance and audit tooling stay in this plugin/repository.
 4. When writing or rewriting one workflow-container prompt or instruction artifact:
    - identify the artifact role before writing it,
-   - apply `Minimal Stable Contract` before introducing or changing data objects, result payloads, prompt context, state files, artifact handles, validators, or handoff payloads,
+   - apply `Minimal Stable Contract` before introducing or changing data objects, result payloads, typed stage input, state files, artifact handles, validators, or handoff payloads,
    - choose the appropriate instruction form from `Prompt Authoring Contract`,
    - write exact inputs, outputs, state boundaries, and terminal behavior when the artifact defines a boundary,
    - write state transitions explicitly when the artifact contains retries, verification loops, blocked states, or recovery,
