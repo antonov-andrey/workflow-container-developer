@@ -95,7 +95,7 @@ Template naming: prompt каждого Codex-backed stage должен быть 
 
 Retry prompt inputs: retry data may be read only from typed `InputT`, declared stage artifacts, optional private `state.json` in the current stage directory when this stage uses one, and runtime-provided retry paths owned by `Prompt Routing`. Runtime не должен добавлять другие generic retry-data channels at the runtime boundary.
 
-Python prompt text placement: Python code не должен хранить human-readable stage instructions в multiline strings. Python code строит typed context и передает machine-facing values.
+Python prompt text placement: Python code не должен хранить human-readable stage instructions в multiline strings. Python code строит typed stage input и передает machine-facing values.
 
 ## Stage Lifecycle
 Порядок stage lifecycle фиксирован:

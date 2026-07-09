@@ -83,7 +83,7 @@ Report a stage-boundary finding when one artifact:
 - DBOS code reads a previous stage `state.json`;
 - a concrete stage has a second data shape for the same semantic object instead of one minimal stable object;
 - an implementation adds compatibility aliases for both prompt-context and input terminology;
-- adds generic prompt channels outside typed prompt context, such as template-name fields, generic shared instructions, generic stage instructions, or generic state-path fields;
+- adds generic prompt channels outside typed stage input, such as template-name fields, generic shared instructions, generic stage instructions, or generic state-path fields;
 - introduces a custom stage runtime that should belong to `workflow-container-runtime`;
 - lets owner-controlled JSON payload names avoid the `_json` suffix.
 
