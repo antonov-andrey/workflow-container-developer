@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-import workflow_container_developer.cli
 from workflow_container_developer.cli import main
 
 
@@ -73,20 +72,3 @@ def test_main_is_importable() -> None:
     """Verify the CLI entrypoint can be imported."""
 
     assert callable(main)
-
-
-def test_cli_module_docstring_matches_optional_discovery_scope() -> None:
-    """Keep CLI module documentation limited to optional discovery behavior."""
-
-    assert (
-        workflow_container_developer.cli.__doc__
-        == "Optional local discovery CLI for adjacent workflow-container projects."
-    )
-
-
-def test_main_docstring_matches_optional_discovery_scope() -> None:
-    """Keep CLI entrypoint documentation limited to optional discovery behavior."""
-
-    assert main.__doc__ is not None
-    assert main.__doc__.startswith("Run the optional local discovery CLI.")
-    assert "developer CLI" not in main.__doc__

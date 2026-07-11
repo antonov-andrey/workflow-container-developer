@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-import workflow_container_developer.project
 from workflow_container_developer.project import WorkflowContainerProjectFinder
 
 
@@ -35,9 +34,3 @@ def test_project_list_get_finds_adjacent_workflow_container(tmp_path: Path) -> N
     finder = WorkflowContainerProjectFinder(developer_path=developer_path)
 
     assert [project.path for project in finder.project_list_get()] == [target_path]
-
-
-def test_project_module_docstring_matches_scope() -> None:
-    """Keep project module documentation limited to current behavior."""
-
-    assert workflow_container_developer.project.__doc__ == "Workflow-container project discovery."

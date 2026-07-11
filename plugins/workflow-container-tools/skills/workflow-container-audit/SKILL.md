@@ -1,6 +1,6 @@
 ---
 name: workflow-container-audit
-description: Use when semantically auditing workflow-container instructions, prompt templates, workflow docs, stage contracts, verification prompts, recovery instructions, or workflow-container authoring changes for clarity, reliability, persistence boundaries, and recoverability.
+description: Use when semantically auditing workflow-container instructions, prompt templates, workflow docs, step contracts, verification prompts, recovery instructions, or workflow-container authoring changes for clarity, reliability, persistence boundaries, and recoverability.
 ---
 
 # Workflow Container Audit
@@ -23,7 +23,7 @@ Instruction-bearing artifacts include:
 - `AGENTS.md`;
 - `doc/design/**`;
 - prompt templates;
-- stage prompts;
+- step prompts;
 - verification prompts;
 - validator instructions;
 - recovery instructions;
@@ -31,13 +31,15 @@ Instruction-bearing artifacts include:
 
 ## Semantic Review Workflow
 
-Use one audit order: role detection -> minimality review -> stage boundary review -> prompt refactor gate -> domain findings.
+Use one audit order: role detection -> terminology and identity review -> minimality review -> runtime boundary review -> persistence and recovery review -> prompt refactor gate -> domain findings.
 
 1. role detection: determine whether each artifact is a boundary contract, workflow sequence, FSM/retry/recovery procedure, generated or persisted data handler, external-source handler, verification guidance, or checking guidance.
-2. minimality review: apply `Minimality Review` before reporting domain-level wording or behavior findings.
-3. stage boundary review: apply `Stage Boundary Review` before domain details for Codex-backed workflow-container stages.
-4. prompt refactor gate: apply `Prompt Refactor Gate` before narrower domain findings for prompt templates.
-5. domain findings: report remaining role-specific semantic findings after the earlier gates. Use these role criteria:
+2. terminology and identity review: require every workflow, step, attempt, result, state and artifact reference to use the canonical role from `1.3. Основные термины`.
+3. minimality review: apply `Minimality Review` before reporting domain-level wording or behavior findings.
+4. runtime boundary review: apply `Runtime Boundary Review` to public classes, DBOS methods, validators, handoffs, `result.json`/`verification.json` ownership and container execution.
+5. persistence and recovery review: apply `Persistence And Recovery Review` to artifact trees, incremental state, atomic publication, restart and retry-layer ownership.
+6. prompt refactor gate: apply `Prompt Refactor Gate` before narrower domain findings for prompt templates.
+7. domain findings: report remaining role-specific semantic findings after the earlier gates. Use these role criteria:
    - boundary contracts must make inputs, outputs, ownership, and forbidden behavior clear;
    - stateful processes must have explicit states and transitions;
    - linear procedures must have an unambiguous step sequence;
@@ -48,50 +50,96 @@ Use one audit order: role detection -> minimality review -> stage boundary revie
 
 ## Minimality Review
 
-Before reporting domain-level wording or behavior findings, check the artifact against `Minimal Stable Contract` from `../workflow-container-developer/references/workflow-container-authoring.md`.
+Before reporting domain-level wording or behavior findings, check the artifact against `6.1. Минимальный стабильный контракт` from `../workflow-container-developer/references/workflow-container-authoring.md`.
 
 Report a minimality finding when the artifact introduces or preserves:
 
 - two objects for one semantic concept;
-- mirrored semantic data across result, typed stage input, private state, artifact handles, audit views, or DBOS handoff payloads;
+- mirrored semantic data across result, typed step input, private state, artifact handles, audit views, or DBOS handoff payloads;
 - duplicate channels for one semantic fact or decision;
 - prompt schema text that duplicates Pydantic models or mechanical validators;
 - validator logic that reconstructs the next handoff object instead of only validating the current boundary;
 - compatibility bridges, proxy layers, alias payloads, or translation layers that exist only to keep an older contract shape alive;
-- private stage state that later stages consume as public handoff data;
+- private step state that later steps consume as public handoff data;
 - a new abstraction that does not remove duplication, stabilize one boundary, or simplify validation and recovery.
 
 The recommended fix must prefer simplification first: remove duplicate data or objects, reuse the existing stable model, move the data to the single owner, derive the value from an existing stable handle, or make one boundary the only source of truth. If simplification is impossible, the finding must propose the smallest idiomatic change that satisfies `KISS`, `DRY`, single source of truth and explicit ownership.
 
+Do not report one minimal public routing decision as duplicated SQLite state when a DBOS workflow needs it to choose the next step without filesystem IO, the current owner derives it unambiguously from the verified database, mechanical validation enforces exact parity, and no row data, reasons, counts, or metadata are copied.
+
 Keep the finding scoped to the changed or directly affected boundary. Do not ask for unrelated broad refactoring unless the duplicated contract crosses that boundary and prevents a correct fix.
 
-## Stage Boundary Review
+## Runtime Boundary Review
 
-For Codex-backed workflow-container stages, use `Codex Stage`, `Stage Lifecycle`, `Workflow Container Class Structure`, `Prompt Routing`, `DBOS Handoff`, `Durable Step Completion`, `JSON Payload Naming`, and `Artifact Materialization` from `../workflow-container-developer/references/workflow-container-authoring.md` as the stage-boundary source of truth. `Stage Lifecycle` owns the public type roles, deterministic step order, Codex-backed step order, standard file writes, validation timing, semantic verification timing, and retry loop. `Workflow Container Class Structure` owns runtime class placement, concrete workflow inheritance, concrete step inheritance, and removal of obsolete lifecycle APIs. Audit whether the artifact violates those owner sections or adds a second owner for one of their boundaries.
+Use `2. Архитектура экосистемы`, `3.1. Протоколы типов`, `3.2. Контексты выполнения и состояние Codex`, `3.3. Иерархия классов`, `3.4. Граница DBOS`, `5.1. Жизненный цикл workflow`, `5.2. Детерминированный шаг`, `5.3. FSM шага Codex`, `5.4. Маршрутизация prompt`, `5.5. Результат проверки`, `5.6. Классификация ошибок и повторов`, `6.2. Результат workflow`, `7. Среда выполнения`, and `Приложение A. Публичные интерфейсы` from `../workflow-container-developer/references/workflow-container-authoring.md` as the runtime-boundary source of truth.
 
-Report a stage-boundary finding when one artifact:
+Report a runtime-boundary finding when one artifact:
 
-- defines a second public state file or makes a later stage depend on a previous stage's private `state.json`;
-- builds typed stage input inline in DBOS workflow code, prompt code, or ad hoc wrapper code instead of through the concrete step `input_build(input_source)` interface;
-- builds `InputSourceT` from previous private `state.json` paths or contents instead of public workflow parameters, public result payloads, and declared artifact handles;
-- asks an action stage, verification stage, prompt template, or domain wrapper to write `input.json`, `result.json`, or `verification.json`;
-- concrete stages write `input.json`, `result.json`, or `verification.json` manually instead of using `WorkflowStepBase` or `WorkflowStepCodexBase`;
+- uses workflow, step, action, verification or attempt as interchangeable owners;
+- keeps `WorkflowBase` as an empty marker, makes `WorkflowStepBase` inherit from `WorkflowBase`, or preserves incompatible hook signatures between deterministic and Codex step types;
+- stores invocation input, execution paths, attempt state or results in reusable DBOS or step instance fields;
+- relies on Codex CLI or user configuration defaults for model selection or reasoning effort, or lets individual steps choose them instead of injecting one explicit `CodexRunnerConfig` from the container composition root;
+- treats a semantic step helper as a DBOS method owner or executes its external IO outside a synchronous `@DBOS.step` wrapper call;
+- lets concrete steps override runtime-owned `run(...)` or lifecycle dispatch instead of implementing only declared domain hooks;
+- builds `InputT` outside `input_build(input_source)` or gives one step a parallel input channel for the same domain data;
+- builds `InputSourceT` from previous private state instead of public workflow input, successful results and declared artifact handles;
+- performs filesystem, network, Codex or other external IO directly in a DBOS workflow method;
+- lets concrete code write standard workflow or step files instead of runtime-owned lifecycle;
+- decorates inherited `WorkflowBase` publication methods with `@DBOS.step` instead of using the runtime-owned `DBOS.run_step` boundary;
 - asks a verifier to own artifact selection, artifact namespaces, artifact lists, or a second failure channel;
-- duplicates Pydantic/schema checks, mechanical validator checks, or `Stage Lifecycle` ordering as prompt text;
-- prompts use obsolete prompt-context routing or copied result payloads instead of the runtime-owned path routing defined by `Prompt Routing`;
-- routes runtime prompt paths differently from `Prompt Routing`;
-- omits recovery-bundle data required by `Durable Step Completion` to rerun validation or verification after restart;
-- requires private `state.json` when declared stage artifacts already own durable progress;
-- DBOS code reads a previous stage `state.json`;
-- a concrete stage has a second data shape for the same semantic object instead of one minimal stable object;
-- an implementation adds compatibility aliases for both prompt-context and input terminology;
-- adds extra generic runtime input channels alongside typed `InputT` instead of making stage-specific runtime values part of the concrete `InputT`;
-- introduces a custom stage runtime that should belong to `workflow-container-runtime`;
-- lets owner-controlled JSON payload names avoid the `_json` suffix.
+- asks a semantic verifier, Codex action, validator, or concrete step to compute result digest/revision, return persisted `VerificationResult`, or write `verification.json` instead of returning only transient `VerificationDecision` to the runtime;
+- duplicates Pydantic/schema checks or mechanical validator checks as prompt text;
+- adds a second mechanical validator boundary or lets a validator build downstream handoff data;
+- routes retry data through copied values instead of the paths owned by `5.4. Маршрутизация prompt`;
+- routes runtime prompt paths differently from `5.4. Маршрутизация prompt`;
+- exposes runtime-owned prompt resources without the protected `runtime/` namespace, allows project templates to shadow that namespace, or loads runtime system prompts through unprefixed names;
+- conflates correct partial domain output with runtime failure or derives one status from multiple channels;
+- uses verification status as terminal workflow outcome or workflow status as the acceptance decision for `result.json`;
+- uses a JSON carrier name that disagrees with its actual serialized-text, validated-model or boundary-payload role;
+- changes a public contract without the version boundary owned by `2.3. Исходные контракты и версии`;
+- places workflow/Codex in the browser VPN namespace, uses writable input secrets, or gives Docker Compose and Kubernetes different execution semantics;
+- introduces a custom step runtime that should belong to `workflow-container-runtime`;
+- preserves compatibility aliases, forwarding wrappers or obsolete lifecycle owners after migration.
+
+## Persistence And Recovery Review
+
+Use `4.1. Дерево экземпляров`, `4.2. Стандартные файлы`, `4.3. Межшаговая передача`, `4.4. Объявленные артефакты`, `4.5. Инкрементальные данные`, `5.7. Атомарная публикация и восстановление`, and `7.4. Материализация внешних артефактов` from `../workflow-container-developer/references/workflow-container-authoring.md` as the persistence source of truth.
+
+Report a persistence or recovery finding when one artifact:
+
+- gives one workflow or step invocation more than one owner directory or gives independent recoverable objects only one aggregate state;
+- makes downstream code read previous private `state.json` or private SQLite state instead of a declared database artifact referenced by the previous result;
+- rewrites an accumulating JSON array or implements mutable current state as an append-only JSONL revision chain instead of one SQLite row per stable domain key;
+- uses JSONL for workflow state, worklists, inventories or FSM data rather than only for immutable event/log streams or fixtures;
+- stores one natural compound identity as a concatenated surrogate column alongside its component fields instead of one composite primary key;
+- lets Codex execute raw SQL, select an arbitrary database path or table, bypass the statically registered Pydantic row model, or control transaction boundaries;
+- lets a downstream read command accept a database path outside its validated input or mutate the previous owner's declared database;
+- publishes a declared SQLite database in WAL mode so required current state may remain in untracked `-wal` or `-shm` companions;
+- copies SQLite-owned rows into `state.json`, `result.json` or a second artifact instead of passing only the declared database reference;
+- publishes or digests an already-created Pydantic object without rebuilding and validating one exact snapshot, so in-place nested mutation can bypass the model contract;
+- publishes standard JSON files non-atomically, deletes the previous verdict before replacing `result.json`, or otherwise creates a delete-first crash window instead of relying on result-identity-bound verdicts;
+- accepts `verification.json` without the required SHA-256 digest and result revision, or accepts a verdict whose digest/revision identity does not match the current publication;
+- includes artifacts or private state in `result_digest` instead of keeping the digest limited to canonical result content and distinguishing Codex attempts through `result_revision_index`;
+- repeats a deterministic or Codex action solely because the current result has no verdict or has a verdict for another identity, instead of applying the recovery matrix for the already published current result;
+- accepts a previous-attempt verdict when a Codex retry produced identical result bytes, or fails to probe current artifacts in `ready` before deciding whether to accept or run the current action;
+- cannot distinguish matching completed input, incomplete execution, failed attempt, stale verdict and mismatched input during restart;
+- creates a missing `input.json` after later lifecycle files or artifacts already exist, or recreates missing Codex `state.json` after result/verdict publication and thereby resets attempt identity or budget;
+- resumes a failed Codex attempt without a durable `verification_failed -> ready` transition or increments the same failed `VerificationResult` again after `ready` was already committed;
+- omits durable Codex attempt state or cannot reconcile a private FSM checkpoint that trails one atomic standard-file publication;
+- omits files required to repeat validation or verification from the recovery bundle;
+- uses one value as both filesystem write target and public artifact handle;
+- accepts an action-supplied path for an artifact whose identity is created during the action instead of deriving the target from the validated identity inside one declared artifact root;
+- lets Codex directly or collectively write independently recoverable declared artifacts when the step requires each item to be validated and durably published before advancing, instead of using the owner-defined single-item producer boundary from `4.4. Объявленные артефакты`;
+- materializes external artifacts without prevalidating the complete tree, allows writes to runtime-owned root files or diagnostics, partially copies a rejected tree, or replaces existing targets non-atomically;
+- creates private state when declared artifacts already own all durable progress.
+
+Do not report temporary coexistence of a previous verdict and a newly published result as a defect by itself. That state is crash-safe only because recovery requires both the canonical result digest and the current publication revision.
 
 ## Prompt Refactor Gate
 
 Before reporting domain-level findings for one prompt template, evaluate whether the prompt itself needs structural refactoring.
+
+Use `6.3. Правила prompt` and `6.4. Механическая и семантическая проверка` from `../workflow-container-developer/references/workflow-container-authoring.md` as the prompt and verification source of truth.
 
 Report prompt refactoring as the first finding when a prompt has multiple responsibilities but presents them as one flat instruction block without clear role-specific structure or an explicit execution sequence.
 
@@ -104,6 +152,15 @@ If a clearer, more reliable, or more recoverable alternative formulation exists,
 ## Finding Contract
 
 Each finding must be self-contained. The reader must be able to implement the fix without asking what artifact, fragment, failure mode, or rewrite target the finding meant.
+
+Use exactly this outer shape:
+
+```text
+- <High|Medium|Low>: <artifact path, role, current problem and concrete impact>
+  Fix: <one exact rewrite and recheck target>
+```
+
+Use `High` when the current contract permits incorrect execution, lost or inconsistent durable data, unsafe recovery, or an impossible public interface. Use `Medium` for competing owners, ambiguous transitions, duplicated contracts, or materially weaker verification. Use `Low` only when behavior is still deterministic and the defect is limited to avoidable clarity or maintenance cost.
 
 Each finding must include:
 

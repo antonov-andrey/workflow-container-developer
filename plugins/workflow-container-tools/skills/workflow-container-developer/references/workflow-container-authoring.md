@@ -1,229 +1,1347 @@
-# Workflow Container Authoring
+# Разработка workflow-container
+
+## Содержание
+- [1. Назначение и краткая модель](#1-назначение-и-краткая-модель)
+  - [1.1. Область действия](#11-область-действия)
+  - [1.2. Сквозной путь данных](#12-сквозной-путь-данных)
+  - [1.3. Основные термины](#13-основные-термины)
+- [2. Архитектура экосистемы](#2-архитектура-экосистемы)
+  - [2.1. Владельцы ответственности](#21-владельцы-ответственности)
+  - [2.2. Направление зависимостей](#22-направление-зависимостей)
+  - [2.3. Исходные контракты и версии](#23-исходные-контракты-и-версии)
+- [3. Программная модель](#3-программная-модель)
+  - [3.1. Протоколы типов](#31-протоколы-типов)
+  - [3.2. Контексты выполнения и состояние Codex](#32-контексты-выполнения-и-состояние-codex)
+  - [3.3. Иерархия классов](#33-иерархия-классов)
+  - [3.4. Граница DBOS](#34-граница-dbos)
+- [4. Файлы и передача данных](#4-файлы-и-передача-данных)
+  - [4.1. Дерево экземпляров](#41-дерево-экземпляров)
+  - [4.2. Стандартные файлы](#42-стандартные-файлы)
+  - [4.3. Межшаговая передача](#43-межшаговая-передача)
+  - [4.4. Объявленные артефакты](#44-объявленные-артефакты)
+  - [4.5. Инкрементальные данные](#45-инкрементальные-данные)
+- [5. Выполнение и восстановление](#5-выполнение-и-восстановление)
+  - [5.1. Жизненный цикл workflow](#51-жизненный-цикл-workflow)
+  - [5.2. Детерминированный шаг](#52-детерминированный-шаг)
+  - [5.3. FSM шага Codex](#53-fsm-шага-codex)
+  - [5.4. Маршрутизация prompt](#54-маршрутизация-prompt)
+  - [5.5. Результат проверки](#55-результат-проверки)
+  - [5.6. Классификация ошибок и повторов](#56-классификация-ошибок-и-повторов)
+  - [5.7. Атомарная публикация и восстановление](#57-атомарная-публикация-и-восстановление)
+- [6. Разработка конкретного контейнера](#6-разработка-конкретного-контейнера)
+  - [6.1. Минимальный стабильный контракт](#61-минимальный-стабильный-контракт)
+  - [6.2. Результат workflow](#62-результат-workflow)
+  - [6.3. Правила prompt](#63-правила-prompt)
+  - [6.4. Механическая и семантическая проверка](#64-механическая-и-семантическая-проверка)
+  - [6.5. Полный пример простого workflow](#65-полный-пример-простого-workflow)
+  - [6.6. Минимальные требования к коду](#66-минимальные-требования-к-коду)
+- [7. Среда выполнения](#7-среда-выполнения)
+  - [7.1. Контейнер, секреты и writeback](#71-контейнер-секреты-и-writeback)
+  - [7.2. Граница Codex](#72-граница-codex)
+  - [7.3. Browser runtime](#73-browser-runtime)
+  - [7.4. Материализация внешних артефактов](#74-материализация-внешних-артефактов)
+- [8. Проверка реализации](#8-проверка-реализации)
+- [Приложение A. Публичные интерфейсы](#приложение-a-публичные-интерфейсы)
+- [Приложение B. Структура workflow-container-runtime](#приложение-b-структура-workflow-container-runtime)
+
+## 1. Назначение и краткая модель
+
+### 1.1. Область действия
+Этот документ является единым нормативным контрактом разработки workflow-container. Он определяет каноническое устройство исходного кода workflow, публичные типы и классы, устойчивые файлы, передачу данных между шагами, проверку результата, повторы, восстановление и границы контейнера.
+
+Код, данные и фактическое поведение всех связанных проектов должны соответствовать этой модели. Сохранение старого API рядом с каноническим не считается соответствием и допускается только при явно согласованной поэтапной миграции.
+
+Канонический путь документа в установленном plugin: `references/workflow-container-authoring.md`. Конкретный контейнер может ссылаться на него из `AGENTS.md` и проектной документации, но не импортирует `workflow-container-developer` и не требует его CLI во время выполнения.
+
+Первые пять глав объясняют систему в порядке выполнения. Шестая глава показывает, как реализовать конкретный контейнер. Седьмая фиксирует инфраструктурные границы. Приложения содержат точные интерфейсы и физическую структуру общего runtime-пакета.
+
+### 1.2. Сквозной путь данных
+Один запуск проходит через следующую цепочку:
+
+```text
+WorkflowInputT
+  -> workflow/input.json
+  -> оркестрация в @DBOS.workflow
+       -> метод-обертка с @DBOS.step
+            -> InputSourceT
+            -> WorkflowStepBase.input_build(...)
+            -> InputT
+            -> step/input.json
+            -> действие шага
+            -> ResultT
+            -> step/result.json
+            -> механическая проверка
+            -> обязательная семантическая проверка для шага Codex
+            -> step/verification.json
+       -> успешный ResultT как возврат метода DBOS step
+  -> WorkflowResultT
+  -> workflow/result.json
+  -> workflow/verification.json
+  -> граница платформы
+```
+
+Здесь есть четыре разных роли:
+
+1. `WorkflowInputT` является публичным входом всего workflow.
+2. `InputSourceT` собирает публичные зависимости конкретного шага в памяти процесса.
+3. `InputT` является неизменяемым публичным входом одного шага и записывается в `input.json` этого шага.
+4. `ResultT` является публичным выходом шага. Следующий шаг получает его через возврат метода DBOS step, а не читает внутреннее состояние предыдущего шага.
+
+Главный инвариант: `input.json` является публичным входом владельца, `result.json` является его публичным выходом, `verification.json` сообщает, принят ли этот выход, `state.json` хранит только внутреннюю FSM и скалярные контрольные точки, а необязательный `state.sqlite3` хранит текущие изменяемые предметные строки и становится публичным только как явно объявленный артефакт.
+
+### 1.3. Основные термины
+| Термин | Значение |
+| --- | --- |
+| Запуск workflow (`Workflow run`) | Один устойчивый вызов конкретного DBOS workflow с одним `WorkflowInputT` и одним `WorkflowResultT`. |
+| Экземпляр workflow (`Workflow instance`) | Один узел дерева результатов. Корневой и каждый дочерний workflow имеют разные каталоги экземпляров. |
+| Шаг workflow (`Workflow step`) | Одна устойчивая граница побочного эффекта, выполняемая методом с `@DBOS.step`. У вызова шага есть один каталог экземпляра и один публичный результат. |
+| Шаг Codex (`Codex-backed step`) | Шаг, в котором общий runtime выполняет одну или несколько попыток Codex. |
+| Попытка Codex (`Codex attempt`) | Один цикл: действие Codex, построение результата, механическая проверка и семантическая проверка. Действие и проверка являются фазами одной попытки, а не отдельными DBOS steps. |
+| Ключ шага (`step_key`) | Стабильный ключ реализации шага и его шаблонов prompt. Ключ действия имеет форму `{object}_{action}`, где `action` является глаголом; ключ проверки равен ключу действия с суффиксом `_verify`. |
+| Публичный результат | Строго типизированный объект, записанный в `result.json`. Последующие шаги могут принять его только вместе с успешным `verification.json`. |
+| Внутреннее состояние | `state.json` и необъявленный `state.sqlite3` текущего экземпляра. Другие workflow и шаги их не читают. |
+| Объявленный артефакт | Созданный или материализованный файл, публичная ссылка на который содержится в текущем `result.json`. |
+| Ссылка на артефакт | Путь относительно корня результатов. Физический путь записи и публичная ссылка имеют разные роли. |
 
-## Назначение
-Этот документ владеет общим контрактом разработки workflow-container проектов. Он описывает, как писать `DBOS` workflow source, `Codex` stages, prompt templates, validators и artifacts. Runtime platform принадлежит `marketplace-automation`; runtime-neutral workflow source contracts принадлежат `workflow-container-contract`; generic workflow-container runtime принадлежит `workflow-container-runtime`; browser/VPN runtime принадлежит `browser-vpn-runtime`; domain logic принадлежит каждому конкретному workflow-container project.
+Термин `stage` не является вторым названием шага в публичном API. Он допустим только при описании миграции старого API.
 
-Канонический путь этого контракта внутри установленного plugin: `references/workflow-container-authoring.md`.
+## 2. Архитектура экосистемы
 
-Конкретный workflow-container project может ссылаться на этот документ из своих инструкций и design-документов, но не должен зависеть от `workflow-container-developer` в production runtime, импортировать его product code или требовать его CLI для запуска workflow.
+### 2.1. Владельцы ответственности
+| Проект | Ответственность |
+| --- | --- |
+| `marketplace-automation` | Платформа выполнения: `DataSource`, `DataContainer`, доступные runtime-возможности, состояние `WorkflowRun`, финализация и обратная запись входных данных. |
+| `workflow-container-contract` | Независимые от среды выполнения модели и загрузчики `workflow.yaml`, `versions.yaml` и общий `WorkflowResult` для границы с платформой. |
+| `workflow-container-runtime` | Общая среда выполнения: базовые классы, жизненный цикл, стандартные пути, атомарная запись JSON, SQLite current state, запуск Codex, рендеринг общих prompt, материализация и общие валидаторы. |
+| `browser-vpn-runtime` | Запуск browser/VPN-процессов, профиль браузера, stealth, locale, viewport и сетевой namespace браузера. |
+| Конкретный workflow-container | Предметные workflow и модели, конкретные шаги, валидаторы, шаблоны prompt и семантика предметных артефактов. |
+| `workflow-container-developer` | Инструкции по разработке, семантический аудит и необязательный локальный CLI обнаружения соседних проектов. |
 
-## Code Quality Baseline
-Проекты workflow-container экосистемы должны использовать общий минимальный baseline качества кода. Этот baseline переносит только проверяемые и идиоматические правила, которые защищают сопровождаемость проекта, и не переносит приватные вкусовые ограничения из внутренних репозиториев.
+`WorkflowResultT` не управляет выходными контейнерами платформы, обратной записью или диагностическими списками. Эти данные принадлежат `marketplace-automation` и не добавляются в предметный результат ради удобства платформы.
 
-`pyproject.toml` должен объявлять `requires-python = ">=3.14"` и конфигурацию `Black` с `target-version = ["py314"]` и `line-length = 120`. Форматирование должно выполняться через `Black`, а не через ручное выравнивание.
+### 2.2. Направление зависимостей
+Конкретный контейнер зависит от закрепленных версий `workflow-container-contract` и `workflow-container-runtime`. Контейнер может обращаться к готовому browser runtime через переданный MCP URL, но не зависит от внутреннего устройства `browser-vpn-runtime`.
 
-Тесты должны запускаться через `pytest`. Runtime package проекты должны дополнительно проходить `python -m compileall <package>` перед handoff после Python behavior changes.
+`workflow-container-runtime` не содержит предметных workflow, названий конкретных контейнеров или предметных prompt. `workflow-container-developer` не является зависимостью рабочего контейнера. Локальные копии кода общей среды выполнения, общих фрагментов prompt и генерируемых схем запрещены.
 
-Public API, stable boundary functions, workflow entrypoints, stage interfaces и non-trivial modules должны иметь type annotations и docstrings, описывающие реальный контракт. Stable config, result, state, stage payload и cross-boundary data objects должны быть strict `Pydantic` v2 models. JSON schema artifacts должны генерироваться из этих моделей, а не храниться как второй ручной источник истины.
+Общая зависимость переносится к нижнему владельцу только тогда, когда она нужна нескольким контейнерам и не содержит предметной семантики. Сам факт появления второго вызова не оправдывает новую общую абстракцию, если поведение не имеет устойчивого самостоятельного контракта.
 
-Refactor должен оставлять код в конечном steady state. Compatibility bridges, forwarding aliases, proxy wrappers, duplicated prompt partials, duplicated generated schemas и локальные копии runtime-owned code запрещены, если пользователь явно не запросил staged migration.
+### 2.3. Исходные контракты и версии
+`workflow.yaml` загружается через `WorkflowDefinition.from_path(path)`, а `versions.yaml` через `WorkflowVersionDefinition.from_path(path)` из `workflow-container-contract`. Marketplace и контейнеры используют эти модели напрямую, без локальных зеркал, повторных загрузчиков и промежуточных re-export модулей.
 
-Project-local imports должны быть обычными module-scope imports. Production code не должен использовать local imports, import fallbacks, dynamic project-local imports или deferred missing-dependency fallbacks.
+`versions.yaml` является единственным реестром версий исходного контракта. Новая версия контракта обязательна при несовместимом изменении публичного входа workflow, публичного результата или межшагового результата.
 
-Полные приватные naming grammar, ORM rules, production database rules, обязательные docstring для каждой private helper function и другие внутренние правила приватных репозиториев не входят в этот baseline.
+Новая версия DBOS workflow обязательна, если изменение несовместимо с восстановлением уже существующего устойчивого запуска. Старые запуски продолжают выполняться старой версией. Поля совместимости, псевдонимы и модели, принимающие одновременно старую и новую форму, внутри новой версии запрещены.
 
-## Minimal Stable Contract
-Workflow-container data contracts must be minimal and stable. One semantic concept must have one minimal stable model at its owning boundary. Other layers must pass that model, reference it, or derive from it instead of creating a second shape for the same concept.
+Модели, сгенерированные JSON schemas, входные контракты prompt, валидаторы, `workflow.yaml` и `versions.yaml` обновляются одной согласованной правкой.
 
-Stage result, DBOS handoff payload, typed stage input, private state, declared artifact and audit view are different roles. They must not mirror the same semantic data only because several stages need that data. If one value can be derived from an existing stable object, artifact handle, typed stage input, registry, or verified handoff payload, a second stored value for that meaning is forbidden.
+## 3. Программная модель
 
-Avoid duplicate channels for the same semantic fact or decision. Runtime lifecycle state belongs to runtime lifecycle results. Domain state belongs to one domain model. Human-readable audit or UI views may expose a subset derived from the stable source, but they must not become a second owner of that data.
+### 3.1. Протоколы типов
+В этом документе протокол типа определяет пять свойств: базовый тип, владельца создания, способ хранения, потребителей и обязательные инварианты. Для моделей данных используется номинальный контракт строгой Pydantic-модели. Параллельный `typing.Protocol` с теми же полями не создается.
 
-Simplification is the default correction path. When one boundary is unclear, duplicated, hard to verify, or hard to recover, first try to remove data, remove objects, merge owners, reuse an existing stable object, or move behavior to the single owner that already has the data. Do not add extra indirection, compatibility shapes, duplicated public state, prompt aliases, or validator-owned reconstruction when removing the duplication solves the problem.
+| Тип | База | Кто создает | Хранение | Кто читает |
+| --- | --- | --- | --- | --- |
+| `WorkflowInputT` | Строгая модель Pydantic v2 | Точка входа или родительский workflow | `input.json` экземпляра workflow | `@DBOS.workflow`, дочерние workflow и методы-обертки DBOS steps |
+| `WorkflowResultT` | `WorkflowResult` | Конкретный workflow после предметной оркестрации | `result.json` экземпляра workflow | Родительский workflow или платформа |
+| `InputSourceT` | Строгая модель Pydantic v2 | Метод-обертка DBOS step из корневого входа и нужных успешных результатов | Не записывается отдельным файлом | Только `input_build(...)` текущего шага |
+| `InputT` | Строгая модель Pydantic v2 | Конкретный шаг в `input_build(...)` | `input.json` экземпляра шага | Действие, валидатор, семантическая проверка и восстановление текущего шага |
+| `ActionOutputT` | Строгая модель Pydantic v2 | Парсер структурированного ответа после действия Codex | Не является публичным файлом | Только `result_from_action_build(...)` текущей попытки |
+| `ResultT` | Строгая модель Pydantic v2 | `result_build(...)` или `result_from_action_build(...)` | `result.json` экземпляра шага | Валидатор, семантическая проверка, метод-обертка DBOS step и следующие шаги |
+| `VerificationDecision` | Строгая модель общей среды выполнения | Общий runtime из исхода механической проверки или semantic verifier | Не сохраняется как самостоятельный файл | Только общий runtime, который связывает решение с текущим результатом |
+| `VerificationResult` | `VerificationDecision` с обязательными digest и номером ревизии результата | Общий runtime из `VerificationDecision`, точного текущего результата и его ревизии публикации | `verification.json` того же экземпляра | Механизм восстановления и вызывающий владелец |
 
-If simplification cannot solve the problem, design the smallest idiomatic change that satisfies `KISS`, `DRY`, single source of truth, explicit ownership and steady-state refactor principles. A new abstraction is allowed only when it removes real duplication, creates one stable boundary, or makes recovery and validation simpler than the direct version.
+Generic-параметры имеют следующие верхние границы:
 
-After every change, review the changed or directly affected boundary for code quality, data minimality and contract clarity. Fix redundant stored data, redundant result channels, proxy layers, bridge states, copied schema text, duplicated prompt instructions, validator-owned object reconstruction, unclear ownership and unnecessary custom structure before handoff. Do not expand this review into unrelated broad refactoring outside the changed or directly affected boundary unless the user explicitly asks for that wider cleanup.
+```python
+WorkflowInputT = TypeVar("WorkflowInputT", bound=BaseModel)
+WorkflowResultT = TypeVar("WorkflowResultT", bound=WorkflowResult)
+InputSourceT = TypeVar("InputSourceT", bound=BaseModel)
+InputT = TypeVar("InputT", bound=BaseModel)
+ActionOutputT = TypeVar("ActionOutputT", bound=BaseModel)
+ResultT = TypeVar("ResultT", bound=BaseModel)
+```
 
-## Prompt Authoring Contract
+Каждая предметная модель, используемая вместо `BaseModel`, должна включать `strict=True`, `extra="forbid"`, `validate_assignment=True` и `validate_default=True`. Общий `WorkflowResult` является открытой platform-facing базой: он строго проверяет собственные поля и сохраняет дополнительные поля конкретного результата, потому что runtime-neutral платформа не знает предметную модель контейнера. Каждый конкретный `WorkflowResultT` переопределяет `extra="forbid"`, поэтому producer по-прежнему имеет один закрытый точный контракт без второго envelope или adapter.
 
-Workflow-container prompts and instruction artifacts must be written as executable contracts, not as broad advice. The author must first identify the artifact role, then choose the instruction form that makes that role unambiguous.
+`InputSourceT` может зависеть от нуля, одного или нескольких более ранних публичных результатов. Если одного существующего объекта достаточно, он используется напрямую. Новая агрегирующая модель нужна только тогда, когда текущему шагу действительно требуется несколько независимых входов.
 
-Use `Contracts` when the text defines boundaries, inputs, outputs, schemas, artifact layout, allowed tools, forbidden tools, naming rules, source access rules, or ownership.
+`InputT` включает существующие устойчивые объекты целиком или ссылки на их артефакты. Он не раскладывает те же данные в новый набор зеркальных полей. `ActionOutputT` содержит только данные, которыми владеет действие; неизменяемые идентификаторы и детерминированные пути достраиваются Python-кодом при создании `ResultT`.
 
-Use `FSM` when the process has states, retry loops, verification loops, blocked states, cancellation, crash recovery, multi-attempt execution, or terminal state transitions.
+### 3.2. Контексты выполнения и состояние Codex
+`workflow-container-runtime` определяет следующие строгие модели среды выполнения:
 
-Use `Workflow` or `Step Sequence` when the process is a linear procedure without meaningful state-machine transitions.
+| Модель | Назначение |
+| --- | --- |
+| `WorkflowRuntimeCapability` | Один строгий составной объект с явными типизированными полями возможностей. Отсутствующая возможность представлена `None`, а не пропущенным ключом универсального словаря. |
+| `WorkflowExecutionContext` | Корень результатов, каталог текущего workflow и `WorkflowRuntimeCapability` текущего вызова. |
+| `WorkflowStepExecutionContext` | Корень результатов, каталог текущего шага и явно выбранный для этого шага `WorkflowRuntimeCapability`. |
+| `CodexRunnerConfig` | Явно выбранные модель Codex и уровень reasoning для всех вызовов одного `CodexRunner`. |
+| `WorkflowStepCodexConfig` | Явный лимит попыток, политика низкоуровневых повторов и политика материализации внешних артефактов. |
+| `WorkflowStepCodexState` | Номер текущей попытки и состояние FSM шага Codex. |
 
-Use `Persistent State` when generated, extracted, normalized, validated, externally loaded, or otherwise significant structured data is needed beyond the current local action.
+Контекст выполнения содержит только расположение экземпляра и `WorkflowRuntimeCapability`. Предметный вход, предыдущие результаты и инструкции prompt в него не входят. Универсальные словари возможностей запрещены: каждая возможность имеет отдельную типизированную модель среды выполнения и явное поле в составном объекте.
 
-Use `Recovery` where known failure modes can occur and the next corrective action must be deterministic.
+`WorkflowExecutionContext.for_step(step_instance_key=..., runtime_capability=...)` детерминированно создает `WorkflowStepExecutionContext` для дочернего шага. Конкретный workflow передает только набор возможностей, объявленный для этого шага. Аналогичный метод общей среды выполнения создает контекст дочернего workflow. Эти операции не выполняют внешний ввод-вывод.
 
-These names are instruction-structure tools, not mandatory universal section headings. A prompt must not contain every section by default. A prompt must use the structure that matches its actual behavior.
+`WorkflowExecutionContext`, `WorkflowStepExecutionContext`, `WorkflowRuntimeCapability`, вложенные модели возможностей, `CodexRunnerConfig` и все модели `WorkflowStepCodexConfig` неизменяемы после создания. `CodexRunnerConfig` является обязательной зависимостью `CodexRunner`: общий runtime не выбирает модель и reasoning по умолчанию, а composition root конкретного контейнера задает эту политику один раз для всех его шагов Codex. `WorkflowStepCodexConfig` является зависимостью конструктора; конкретный шаг не прячет лимит попыток или политику повторов в локальных значениях по умолчанию.
 
-When one prompt has multiple responsibilities, it must separate those responsibilities into clear role-specific instruction blocks or an explicit execution sequence. A long flat prompt that mixes several roles without clear workflow structure is invalid even when each individual sentence is technically correct.
+`WorkflowStepCodexState` является изменяемым устойчивым состоянием и допускает состояния `ready`, `result_published`, `verification_failed` и `completed`. Конкретный шаг может объявить точную производную модель со своими внутренними скалярными контрольными точками, но не переопределяет поля общей среды выполнения и не копирует предметные строки из SQLite. `state_build(execution_context, step_input)` обязан вернуть объект ровно объявленного `state_model`; подкласс или более широкая модель не принимаются. Общий runtime повторно проверяет точный снимок состояния перед записью и остается единственным владельцем переходов общих FSM-полей.
 
-Significant structured data must be persisted at the nearest stable boundary when it is needed by a later step, verifier, retry, restart, follow-up, or external consumer. It must not be accumulated only in model memory and written at the end of a long stage.
+Общая среда выполнения предоставляет пять явных сервисов с разными точками подключения:
 
-Ephemeral local context may stay in the current execution when it is limited to the current local action. When local values become a persistent collection, registry, queue, recovery state, audit state, or cross-step handoff, they become persistent state and must be written explicitly.
+| Сервис | Единственная ответственность |
+| --- | --- |
+| `JsonArtifactWriter` | Устойчивая атомарная публикация стандартных JSON-файлов. |
+| `SqliteStateStore` | Транзакционное хранение текущих предметных строк в SQLite-таблицах, описанных точными Pydantic-моделями. |
+| `ArtifactMaterializer` | Предварительная проверка и атомарное копирование настроенных внешних деревьев артефактов в каталог текущего шага. |
+| `PromptRenderer` | Рендеринг одного названного Jinja2 template с защищенным namespace общих runtime-ресурсов. |
+| `CodexRunner` | Один низкоуровневый вызов Codex с явно настроенными моделью и reasoning, проверкой структурированного ответа и собственной политикой транспортных повторов. |
 
-The shared authoring contract must avoid domain-specific examples. Examples are allowed only when they are clearly illustrative or belong to a domain-owned prompt in the concrete workflow-container project. A shared workflow-container contract must not turn a domain-specific case into a generic rule.
+`WorkflowBase` и `WorkflowStepBase` получают `JsonArtifactWriter`. `WorkflowStepCodexBase` дополнительно получает `ArtifactMaterializer`, `PromptRenderer` и `CodexRunner`. `SqliteStateStore` получает только конкретный шаг, которому действительно нужно изменяемое предметное состояние; он не является обязательной зависимостью базовых классов. Все сервисы передаются в конструкторы явно и не создаются внутри `run(...)`. Полные сигнатуры находятся в `Приложение A. Публичные интерфейсы`.
 
-## Workflow Source Contract Boundary
-`workflow-container-contract` владеет runtime-neutral контрактами workflow source: `Pydantic` models и loaders для `workflow.yaml` и `versions.yaml`, включая `WorkflowDefinition` и `WorkflowVersionsDefinition`. `marketplace-automation` и workflow-container projects должны использовать эти модели как общий контракт чтения и валидации workflow source metadata. `workflow-container-developer` только документирует и audit-ит этот контракт; он не должен становиться runtime owner или import dependency для этих моделей.
+### 3.3. Иерархия классов
+Иерархия разделяет оркестрацию workflow и семантику одного шага:
 
-## Runtime Package Boundary
-`workflow-container-runtime` владеет generic исполняемым runtime-кодом и generic prompt resources, которые нужны workflow-container проектам в production runtime: `Codex` subprocess runner, JSON schema output boundary, common prompt renderer, common prompt partials, generic verified stage lifecycle, generic browser-tool event validation и generic artifact helpers.
+```text
+WorkflowBase[WorkflowInputT, WorkflowResultT]
+  <- конкретный workflow + DBOSConfiguredInstance
 
-Конкретный workflow-container project должен подключать `workflow-container-runtime` как обычную pinned Python dependency. Он не должен копировать в свой код generic `CodexStageRunner`, generic verified stage lifecycle, generic `Codex` subprocess lifecycle, runtime-owned prompt partials или generic browser-tool validation. В конкретном workflow-container project остаются только domain workflow, domain schemas, domain validators, domain prompt templates, domain prompt partials и domain artifact semantics.
+WorkflowStepBase[InputSourceT, InputT, ResultT]
+  <- WorkflowStepDeterministicBase[InputSourceT, InputT, ResultT]
+       <- конкретный детерминированный шаг
+  <- WorkflowStepCodexBase[InputSourceT, InputT, ActionOutputT, ResultT]
+       <- конкретный шаг Codex
+```
 
-`workflow-container-developer` может проверять наличие локальных копий runtime-owned файлов, но не является runtime dependency и не должен поставлять importable runtime code.
+`WorkflowBase` и `WorkflowStepBase` являются независимыми базовыми абстракциями. Шаг не является разновидностью workflow и не наследуется от `WorkflowBase`.
 
-## `DBOS` Workflow Source
-`Workflow Source`, который использует `DBOS`, должен оформлять `workflow` и `step` владельцев как `@DBOS.dbos_class` классы с instance-method методами.
+| Класс | Владеет | Конкретный подкласс реализует |
+| --- | --- | --- |
+| `WorkflowBase` | Публикация и восстановление стандартных файлов workflow через унаследованные `final`-методы с `DBOS.run_step` | `run(...)` и, при наличии итоговых предметных инвариантов, `result_validate(...)` |
+| `WorkflowStepBase` | Финальный `run(...)`, построение `input.json`, стандартные пути, атомарная публикация и восстановление | `input_build(...)`, при необходимости `artifact_prepare(...)` и `result_validate(...)` |
+| `WorkflowStepDeterministicBase` | Полный жизненный цикл детерминированного шага | `result_build(...)` |
+| `WorkflowStepCodexBase` | Попытки Codex, механическая граница, семантическая проверка, повторы и FSM | `result_from_action_build(...)`, `step_key`, `action_output_model`, `result_model` и `state_model` |
 
-Экземпляры таких классов должны быть stateless. Все durable данные запуска должны передаваться явными аргументами `DBOS` метода. `self` может хранить только stateless dependencies: factories, registries, validators, artifact layout, prompt loader, `Codex` runner и другие неизменяемые сервисы без run-specific mutable state.
+Конкретный шаг не переопределяет `run(...)` или внутреннюю диспетчеризацию жизненного цикла. Базовые классы содержат реальное общее поведение, а не только сигнатуры. Полные сигнатуры приведены в `Приложение A. Публичные интерфейсы`.
 
-`DBOS` workflow method владеет deterministic orchestration. `DBOS` step method владеет одной side-effect phase. Browser, network, filesystem writes, `Codex`, secret access и другие external IO должны выполняться только внутри `DBOS` steps или до старта root workflow.
+### 3.4. Граница DBOS
+Точка входа workflow и предметные методы-обертки DBOS steps являются методами экземпляра конкретного класса с `@DBOS.dbos_class`. Класс workflow наследуется от `WorkflowBase` и `DBOSConfiguredInstance`.
 
-`Workflow Source` должен разделять platform runtime contract, `DBOS` workflow layer, `DBOS` step layer, semantic stage layer, validator layer и artifact layer. Platform владеет запуском контейнера, `DataSource`, `DataContainer`, runtime capabilities, finalization, input writeback и статусом `WorkflowRun`. Контейнер возвращает `WorkflowResult`; `WorkflowResult` не управляет platform output, writeback или diagnostics списками через result payload. `Workflow Source` владеет смыслом своих шагов, prompts, result schemas, validators, artifact paths и интерпретацией данных.
+Экземпляр DBOS class не хранит данные отдельного запуска. В `self` разрешены только неизменяемые и повторно используемые зависимости: объекты шагов, реестры, валидаторы, структура артефактов, средство рендеринга prompt, `CodexRunner` и другие сервисы. Вход workflow, текущие пути, состояние попытки и результаты передаются явными типизированными аргументами.
 
-## `Codex` Stage
-Codex-backed stage должен состоять из action stage и verification stage. Action stage name должен иметь форму `{object}_{action}`, где `{action}` является глаголом. Verification stage name должен быть action stage name с постфиксом `_verify`.
+Метод с `@DBOS.workflow` выполняет только детерминированную оркестрацию: вызывает DBOS steps в воспроизводимом порядке и принимает решения по входу workflow и сохраненным возвратам шагов. Он не выполняет файловые, сетевые, браузерные или Codex-операции.
 
-Action output and artifacts: `Codex` action возвращает schema-valid JSON через structured output и пишет только явно объявленные generated artifacts или optional private `state.json`. Generated artifacts принадлежат текущему stage. Action stage не пишет standard runtime files.
+`WorkflowBase.input_write_step(...)` и `WorkflowBase.result_write_step(...)` являются обычными `final`-методами базового класса, которые внутри вызывают `DBOS.run_step`. Они не несут унаследованный декоратор `@DBOS.step`: DBOS связывает декорированные методы экземпляра с конкретным `@DBOS.dbos_class`, поэтому такой декоратор на базовом методе не является переносимой границей. `DBOS.run_step` сохраняет устойчивую границу без одинаковых методов-оберток в каждом конкретном workflow.
 
-Verification output: verification stage возвращает только minimal `StageVerificationResult` со `status` and `feedback_list`. Verification stage не владеет artifact list, artifact namespace, source-of-truth state или second failure channel. Successful verification payload is exactly `{"status": "success", "feedback_list": []}`. Verification failure возвращается как feedback в тот же action stage до достижения attempt limit. Отдельные fix stages запрещены.
+Конкретный подкласс `WorkflowStepBase` является реализацией семантики без состояния отдельного запуска, а не владельцем метода DBOS. Метод с `@DBOS.step` синхронно вызывает `step.run(...)` и является устойчивой границей побочных эффектов. Все внешние операции внутри `step.run(...)` происходят в рамках этого вызова.
 
-Typed stage input: each concrete step implements `input_build(input_source: InputSourceT) -> InputT`. `InputSourceT` is the typed public source used to build one step input. It may contain root workflow parameters, public result payloads from any earlier step that the current step actually depends on, and declared artifact handles from those public results. It is not limited to the immediately previous step. It must not contain or require paths or contents from a previous step's private `state.json`. Runtime writes the resulting strict Pydantic `InputT` object as `input.json`. Prompts read stage input from disk through `input_path`. Runtime must not expose additional generic input channels alongside `InputT`; every stage-specific runtime value must be a typed field inside the concrete `InputT`. Legacy `prompt_context` and `prompt_context_path` terminology is forbidden except when documenting migration away from the old contract.
+Автоматические повторы и классификация ошибок принадлежат `5.6. Классификация ошибок и повторов`. Методы-обертки `@DBOS.step` не добавляют третий автоматический retry-слой.
 
-Input worklist and progress state: input worklists and input execution plans belong to typed `InputT` in `input.json`. Generated batch, retry или resumable progress должен быть durable через declared stage artifacts или через private `state.json`, когда отдельный state реально нужен. Generated domain state must be typed contents of declared stage artifacts or private `state.json`, not separate public state artifacts.
+## 4. Файлы и передача данных
 
-Private state boundary: `state.json`, когда он используется, является private state текущего stage и его validator. Следующий stage не должен зависеть от предыдущего `state.json`. Stage-specific public state filenames запрещены.
+### 4.1. Дерево экземпляров
+Каждый вызов workflow и шага имеет один детерминированный каталог. Общие функции построения путей являются единственным владельцем физической структуры каталогов.
 
-Template naming: prompt каждого Codex-backed stage должен быть одним полным Jinja2 template-файлом. Имя action template должно быть `{stage_key}.md.j2`; имя verification template должно быть `{stage_key}_verify.md.j2`. Runtime config не должен принимать отдельные поля с именами template.
+```text
+<result_dir>/
+  workflow/
+    <workflow_instance_key>/
+      input.json
+      result.json
+      verification.json
+      [state.json]
+      [state.sqlite3]
+      workflow/
+        <child_workflow_instance_key>/
+          ...
+      step/
+        <step_instance_key>/
+          input.json
+          result.json
+          verification.json
+          [state.json]
+          [state.sqlite3]
+          [declared artifacts]
+```
 
-Retry prompt inputs: retry data may be read only from typed `InputT`, declared stage artifacts, optional private `state.json` in the current stage directory when this stage uses one, and runtime-provided retry paths owned by `Prompt Routing`. Runtime не должен добавлять другие generic retry-data channels at the runtime boundary.
+Квадратные скобки обозначают необязательный физический файл или каталог. Необязательный файл отсутствует, а не заменяется альтернативным именем.
 
-Python prompt text placement: Python code не должен хранить human-readable stage instructions в multiline strings. Python code строит typed stage input и передает machine-facing values.
+Ключ экземпляра выводится из устойчивого идентификатора workflow или предметного объекта. Позиция в списке, случайное имя и номер попытки не являются идентификатором экземпляра.
 
-## Stage Lifecycle
-`Stage Lifecycle` владеет типами public interface и порядком выполнения workflow/step runtime.
+Независимо восстанавливаемый объект получает собственный дочерний узел, собственное внутреннее состояние или собственную строку SQLite с предметным ключом. Один общий статус не заменяет результаты независимых объектов.
 
-Type parameters:
+### 4.2. Стандартные файлы
+| Файл | Видимость | Содержание | Владелец записи |
+| --- | --- | --- | --- |
+| `input.json` | Публичный | Неизменяемый `WorkflowInputT` или `InputT` | Общий жизненный цикл |
+| `result.json` | Публичный | Текущий `WorkflowResultT` или `ResultT` | Общий жизненный цикл |
+| `verification.json` | Публичный | `VerificationResult`, digest и номер ревизии которого соответствуют текущей публикации `result.json` | Общий жизненный цикл |
+| `state.json` | Внутренний | FSM и скалярные контрольные точки текущего владельца | Общий жизненный цикл и средство записи состояния |
+| `state.sqlite3` | Внутренний или объявленный | Текущие изменяемые предметные строки, когда владельцу требуется инкрементальное состояние по предметным ключам | `SqliteStateStore` через разрешенную команду проекта или Python-владельца |
 
-- `WorkflowInputT` is the strict typed public input of one workflow run.
-- `WorkflowResultT` is the strict typed public output of one workflow run.
-- `InputSourceT` is the typed in-memory source used to build one step input. It is built by workflow code from `WorkflowInputT`, public results of earlier successful steps, and declared artifact handles. It is never built from a previous step's private `state.json`.
-- `InputT` is the strict typed persisted input of one step. `WorkflowStepBase` writes it to `input.json`.
-- `ActionOutputT` is the strict typed structured output returned by one Codex action attempt. It is not the public step result unless the concrete step intentionally uses the same model for both roles.
-- `ResultT` is the strict typed public output of one step. `WorkflowStepBase` writes it to `result.json` and returns it to the DBOS step owner.
-- `StageVerificationResult` is the runtime verification verdict written to `verification.json`.
+Workflow и детерминированный шаг создают `state.json` только при наличии реального возобновляемого состояния. Шаг Codex всегда создает `state.json`, потому что его попытки образуют FSM.
 
-`WorkflowBase[WorkflowInputT, WorkflowResultT]` owns workflow-level orchestration mechanics for one workflow family. Its public interface is `run(workflow_input: WorkflowInputT) -> WorkflowResultT`. A workflow implementation calls DBOS step methods in workflow order, and each DBOS step method builds the concrete step `InputSourceT` from public workflow data before calling the concrete step `run(...)`.
+Prompt, действие Codex, семантическая проверка, предметный валидатор и конкретный метод-обертка DBOS не записывают стандартные файлы вручную.
 
-`WorkflowStepBase[InputSourceT, InputT, ResultT]` owns deterministic step lifecycle. Its public interface is `run(input_source: InputSourceT) -> ResultT`.
+### 4.3. Межшаговая передача
+Единственной межшаговой передачей является успешный возврат DBOS step. Возвращаемый объект является тем же `ResultT`, который записан в `result.json` и принят успешным `verification.json` с совпадающими digest и номером ревизии.
 
-Deterministic step order:
+Конкретный workflow строит вход следующего DBOS step из:
 
-1. Receive `InputSourceT` from the DBOS step owner.
-2. Call `input_build(input_source)` to build `InputT`; this is the only allowed construction path for `input.json`.
-3. Write `input.json` so prompts, validators, recovery and audit read the same durable step input.
-4. Call `artifact_prepare(stage_input)` so declared output targets exist before work starts.
-5. Call `result_build(stage_input)` to build `ResultT`.
-6. Write `result.json` as the current step result candidate.
-7. Call `result_validate(stage_input, result)` for deterministic validation.
-8. Write `verification.json` with a success verdict after validation succeeds.
-9. Return the same `ResultT` object that was written to `result.json`.
+- исходного `WorkflowInputT`;
+- публичных результатов любых необходимых более ранних шагов;
+- публичных результатов дочерних workflow;
+- ссылок на объявленные артефакты.
 
-If deterministic validation fails, the step writes a failed verification verdict and raises. A deterministic step has no Codex retry loop.
+Из этого набора метод-обертка DBOS step создает один `InputSourceT`, а конкретный шаг создает `InputT` только через `input_build(execution_context, input_source)`. `execution_context` нужен только для построения объявленных физических путей текущего экземпляра; предметные зависимости остаются в `InputSourceT`.
 
-`WorkflowStepCodexBase[InputSourceT, InputT, ActionOutputT, ResultT]` extends `WorkflowStepBase` and owns Codex-backed step lifecycle. Its public interface is also `run(input_source: InputSourceT) -> ResultT`.
+Следующий шаг не читает `state.json` или внутреннюю SQLite state database предыдущего владельца. Текущий владелец может прочитать собственное внутреннее состояние, чтобы достроить публичный `ResultT`, но не передает путь или содержимое private state дальше. База, необходимая следующему владельцу, является объявленным артефактом и передается только по публичной ссылке из `ResultT`.
 
-Codex-backed step order:
+Родительский `result.json` включает нужный дочерний результат целиком или ссылку на него. Он не копирует отдельные поля дочернего результата в параллельную модель без самостоятельной публичной семантики.
 
-1. Receive `InputSourceT` from the DBOS step owner.
-2. Call `input_build(input_source)` to build `InputT`.
-3. Write `input.json` once before the first action attempt.
-4. Call `artifact_prepare(stage_input)` so declared action targets exist before Codex runs.
-5. Start the action attempt loop.
-6. Render the action prompt through `Prompt Routing`.
-7. Run Codex action and parse `ActionOutputT`.
-8. Call `action_output_validate(stage_input, action_output)` for deterministic checks on the action payload.
-9. Materialize configured external artifact roots for the current attempt.
-10. Call `result_build(stage_input, action_output)` to build public `ResultT` from the action payload, declared artifacts, and same-step private state when the current step uses one.
-11. Write `result.json` as the current attempt result candidate.
-12. Call `result_validate(stage_input, result)` for deterministic validation.
-13. Run semantic verification through `Prompt Routing`; verification reads `input.json`, `result.json`, and declared artifacts.
-14. Write `verification.json` with the semantic verdict.
-15. Return `ResultT` when verification succeeds.
-16. Retry from action prompt rendering when validation or verification produces retry feedback and the attempt limit is not reached.
-17. Raise when the attempt limit is reached without successful verification.
+### 4.4. Объявленные артефакты
+Если идентичность артефакта известна до действия, `InputT` содержит его точный физический путь. Если предметная идентичность появляется только во время действия, проект объявляет один ограниченный корень артефактов и одну детерминированную функцию `identity -> relative path`; произвольный путь не становится частью результата действия.
 
-Concrete deterministic steps implement `input_build(...)`, `artifact_prepare(...)`, `result_build(...)`, and `result_validate(...)`. Concrete Codex-backed steps implement those hooks plus `action_output_validate(...)` and Codex-specific `result_build(...)`. Base classes own the order, file writes, prompt routing, artifact materialization timing, verification write, and retry loop.
+Когда действию нужны и физический путь записи, и будущая публичная ссылка, конкретный `input_build(...)` создает один устойчивый `ArtifactWriteTarget`: точный физический путь внутри доступного дерева и готовую нормализованную ссылку относительно корня результатов. Во время действия producer записывает и повторно читает новый артефакт только по физическому пути; публичная ссылка становится путем чтения после материализации. `ResultT` переносит только публичную ссылку; предметный Python-код достраивает ее из того же `ArtifactWriteTarget`, а не из данных действия.
 
-Only these base classes own the standard stage-file lifecycle. Concrete stages must not write `input.json`, `result.json`, or `verification.json` manually.
+Механический валидатор проверяет:
 
-## Workflow Container Class Structure
-`workflow-container-runtime` должен владеть общей class structure для workflow и step lifecycle:
+- что физический путь и публичная ссылка находятся внутри разрешенных деревьев;
+- что файл существует и имеет ожидаемый тип;
+- что ссылка соответствует объявленному физическому пути;
+- что результат не ссылается на внутреннее состояние или внешний необъявленный путь.
 
-- `workflow_container_runtime/workflow/base.py` owns `WorkflowBase[WorkflowInputT, WorkflowResultT]`;
-- `workflow_container_runtime/stage/file.py` owns standard stage filenames and path helpers for `input.json`, `result.json`, `verification.json`, and `state.json`;
-- `workflow_container_runtime/stage/step.py` owns `WorkflowStepBase[InputSourceT, InputT, ResultT]` and `WorkflowStepCodexBase[InputSourceT, InputT, ActionOutputT, ResultT]`;
-- `workflow_container_runtime/codex/runner.py` owns only the low-level Codex subprocess boundary and must not own DBOS handoff, domain stage semantics, or standard stage-file lifecycle;
-- `workflow_container_runtime/artifact/**` owns generic artifact writer and materialization mechanics.
+Артефакты шага создает его действие или детерминированная реализация. Внешнее дерево создает владеющая им внешняя система; действие Codex его не копирует.
 
-Concrete workflow-container projects must keep only domain-owned workflow and stage classes:
+Если Codex последовательно создает несколько независимо восстанавливаемых предметных артефактов и каждый артефакт должен стать валидным и устойчивым до перехода к следующему элементу, контейнер предоставляет узкую предметную producer-команду. Команда читает один JSON-объект из `stdin`, выбирает ровно один объявленный target из текущего `InputT` по устойчивому идентификатору элемента, проверяет точную Pydantic-модель и принадлежность target текущему экземпляру, затем атомарно публикует объект через `JsonArtifactWriter`. Prompt требует один вызов на элемент и запрещает прямую запись, JSON в аргументе shell-команды и группировку нескольких предметных объектов в одном вызове. Отдельный progress ledger не создается, если наличие валидных объявленных артефактов уже полностью выражает устойчивый прогресс.
 
-- concrete workflow classes inherit from `WorkflowBase`;
-- concrete deterministic steps inherit from `WorkflowStepBase`;
-- concrete Codex-backed steps inherit from `WorkflowStepCodexBase`;
-- concrete step classes implement only their inherited domain hooks and domain result construction;
-- DBOS class methods validate incoming DBOS payloads, build public `InputSourceT` values from root workflow parameters and earlier public results, call concrete step `run(...)`, and return the public result payload;
-- DBOS class methods must not implement stage lifecycle order, manually write standard stage files, or read previous step private state.
+Для идентичности, созданной действием, producer-команда принимает текущий `input.json`, проверенный предметный ключ и один объект, сама вычисляет разрешенный соседний target через проектный layout и атомарно публикует файл. Codex не передает физический или публичный путь. Producer повторно проверяет, что вычисленный target принадлежит объявленному корню, а предметный результат использует путь, вычисленный тем же layout. Имя файла не является источником идентичности и не разбирается обратно в предметные поля.
 
-Compatibility lifecycle APIs, forwarding wrappers, and old public lifecycle owners are forbidden after migration. When an older public lifecycle owner is replaced by `WorkflowStepCodexBase`, the old API must be removed instead of kept as a bridge.
+### 4.5. Инкрементальные данные
+Изменяемая предметная коллекция хранится в SQLite, если элементы появляются по одному, обновляются по устойчивому предметному ключу и должны пережить повтор, перезапуск или переход между локальными действиями. Полная перезапись растущего JSON-массива и append-only цепочка ревизий поверх JSONL не являются допустимой заменой изменяемого хранилища.
 
-## Prompt Routing
-Runtime prompt routing:
+Общий runtime владеет `SqliteStateStore`, `SqliteStateReader`, `SqliteStateTable` и `SqliteStateCommand`. Конкретный контейнер объявляет только строгие Pydantic-модели строк и статический реестр разрешенных таблиц. `SqliteStateTable` связывает имя SQLite-таблицы, точную модель строки и непустой упорядоченный набор полей первичного ключа. Одно поле задает обычный ключ, несколько полей задают составной первичный ключ. Каждое поле первичного ключа является обязательным скалярным полем точной модели. Runtime создает SQLite-столбцы из полей модели, сериализует составные значения каноническим JSON в их единственном столбце и повторно проверяет точную модель после чтения. Естественная составная идентичность хранится только как составной первичный ключ; отдельный склеенный столбец ключа запрещен. Предметные строки не копируются в отдельный JSON payload, `state.json` или `result.json`.
 
-- first action attempt receives `input_path`;
-- retry action attempt receives `input_path` and `previous_stage_result_path`;
-- verification attempt receives `input_path` and `stage_result_path`.
+Изменяемая база состояния имеет стандартное соседнее имя `state.sqlite3` в каталоге текущего владельца. `SqliteStateStore` открывает ее через стандартный `sqlite3`, использует `journal_mode=DELETE` и `synchronous=FULL`, выполняет каждую запись в короткой транзакции, закрывает соединение после операции и предоставляет проверяемые `upsert`, `get`, `list`, `list_by_primary_key_prefix` и `delete`. WAL запрещен, потому что объявленный артефакт должен быть одним самодостаточным файлом без обязательных `-wal` и `-shm`. Запись идентифицируется предметным первичным ключом; общие `entity_id`, `record_id`, `revision_index`, ссылки на предшествующие записи и журнал предыдущих значений запрещены. Повтор одного `upsert` с тем же ключом и теми же значениями идемпотентен, а исправление обновляет текущую строку атомарно. Межтабличные предметные связи проверяет механический валидатор контейнера; общий runtime не вводит отдельный ORM или универсальную схему внешних ключей.
 
-Runtime must not pass obsolete prompt-context routing or copied result payloads into either prompt. `result.json` принадлежит `WorkflowStepBase` / `WorkflowStepCodexBase` lifecycle.
+Для составного первичного ключа методы `get` и `delete` получают значения в порядке, объявленном `primary_key_field_name_tuple`. Runtime проверяет число значений и каждое значение по типу соответствующего поля модели до выполнения SQL. При открытии существующей базы runtime сверяет таблицу, столбцы и порядок полей первичного ключа с текущим статическим реестром и завершает восстановление ошибкой при несовместимой схеме.
 
-## DBOS Handoff
-DBOS step handoff belongs to the successful step return after verified lifecycle. The workflow implementation builds each next step's `InputSourceT` explicitly from root workflow parameters plus the public result payloads and declared artifact handles from all earlier successful steps that the next step actually needs. That dependency set may include zero, one, or several previous steps. A downstream step must never read a previous step `state.json`.
+`list_by_primary_key_prefix` принимает непустой ведущий префикс значений в том же порядке и возвращает совпавшие строки в полном порядке первичного ключа. Он не принимает пропуски между полями, произвольные условия или SQL. Эта операция является единственным общим поисковым сокращением поверх составного ключа; более сложная предметная выборка остается в Python-потребителе после проверенного чтения.
 
-A same-stage owner may read its private `state.json` only to derive declared public result fields or declared artifact references before returning `ResultT`.
+Codex не выполняет raw SQL и не выбирает путь базы данных, имя таблицы, модель или границу транзакции. `SqliteStateCommand` принимает текущий публичный `input.json`, вычисляет только соседний `state.sqlite3`, разрешает таблицу через переданный контейнером статический реестр и вызывает общий store. `upsert` читает из `stdin` одну полную строку; `get` и `delete` читают объект ровно со всеми полями первичного ключа; `list` возвращает все строки; `list-prefix` читает объект ровно с непустым ведущим набором полей первичного ключа. Каждый вход повторно проверяется по точной модели строки и объявленным полям ключа. Команды чтения возвращают один объект или компактный JSON-массив в порядке первичного ключа. Конкретный executable только передает статический реестр общему владельцу команды и не повторяет разбор аргументов, работу с SQLite или управление транзакциями.
 
-## Durable Step Completion
-`DBOS` step считается завершенным только после durable записи полного recovery bundle: `input.json`, `result.json`, `verification.json`, declared stage-generated artifacts, optional private `state.json` in the current stage directory when this stage uses one, and materialized external artifact tree files referenced by current stage data and required to rerun validation or verification after restart.
+Когда следующий шаг читает объявленную SQLite-базу предыдущего владельца, его узкая команда только для чтения принимает текущий `input.json` и предметный селектор, вычисляет точный путь базы только из проверенного `InputT` и использует `SqliteStateReader` как единственного владельца downstream-чтения. Она не принимает путь базы, не изменяет предыдущую базу и не сохраняет полученные строки в новый input, result или промежуточный артефакт. Предметный селектор и способ найти соответствующую публичную ссылку принадлежат конкретному контейнеру; разбор SQLite, проверка схемы и чтение остаются в общем runtime.
 
-## JSON Payload Naming
-Owner-controlled names for JSON payload values must use `_json`.
+`state.json` хранит только runtime FSM и скалярные checkpoint-значения; предметные строки SQLite в нем отсутствуют. Пока базу читает только текущий владелец, она является внутренним state artifact. Если следующий workflow или шаг должен читать базу, `state.sqlite3` становится объявленным артефактом, а `result.json` переносит только ссылку на этот файл, не копируя строки.
 
-## Artifact Materialization
-Codex-backed action stage различает stage-generated artifacts и external artifact trees.
+Поскольку метод `@DBOS.workflow` не выполняет файловый ввод-вывод, `ResultT` может дополнительно содержать одно минимальное предметное решение, необходимое только для детерминированного выбора следующего шага. Такое поле допустимо лишь когда оно не копирует строки, причины, счетчики или метаданные базы, однозначно выводится текущим владельцем из проверенной базы и механически сверяется с ней. Детальные данные остаются только в SQLite.
 
-Stage-generated artifacts принадлежат текущему stage и пишутся самим stage в объявленные stage paths.
+После успешной проверки результата владелец больше не изменяет объявленную database. Downstream открывает ее только для чтения. Исправляющая попытка может менять базу только до публикации и успешной проверки результата этой попытки.
 
-External artifact trees принадлежат другой run-owned системе, которая зеркалирует stage-relative paths под одним или несколькими artifact roots. Codex-backed action stage не должен копировать такие деревья сам.
+JSONL разрешен только для неизменяемого append-only event/log stream или неизменяемого fixture, где существующие записи никогда не исправляются и текущее состояние не вычисляется сворачиванием ревизий. Внешний протокольный event stream MAY сохранять принадлежащий протоколу формат JSONL. Workflow state, worklist, inventory, FSM и другие изменяемые предметные данные в JSONL запрещены.
 
-`workflow-container-runtime` должен предоставлять artifact materialization layer с явными generic policy. Materialization timing is owned by `Stage Lifecycle`. Runtime materializes configured external artifact roots by copying the matching stage tree into the current stage directory. Runtime materialization must not expose a second generic API that rewrites arbitrary result reference lists. The default browser evidence artifact root MAY be `.playwright-mcp/current`, but policy naming must stay source-neutral. Disable materialization with an empty artifact root list. Workflow-container projects, prompt templates и Codex stages не должны копировать или переопределять runtime materialization logic.
+Небольшая коллекция, создаваемая одним локальным действием и сразу публикуемая целиком, остается обычным атомарным JSON.
 
-## Codex Sandbox Boundary
-`Codex` subprocess внутри workflow container не должен включать собственный filesystem sandbox. Sandbox workflow определяется контейнером, Kubernetes pod, подключенными `DataSource` snapshot-ами и разрешенными output `DataContainer` path-ами.
+## 5. Выполнение и восстановление
 
-`Workflow Source` должен запускать `Codex` так, чтобы он мог записывать stage artifacts и evidence в разрешенную рабочую область без `bubblewrap` или namespace-зависимостей внутри контейнера. Отключение filesystem sandbox не переносит `Codex` в browser/VPN network path.
+### 5.1. Жизненный цикл workflow
+Конкретный `WorkflowBase.run(...)` выполняет один порядок:
 
-## Browser Runtime Boundary
-Workflow source получает browser runtime как готовый `MCP` URL. Source code workflow может передать этот URL в `Codex`, но не владеет настройками OpenVPN, stealth, browser flags, user agent, locale, timezone, viewport, profile materialization или выбором Playwright `MCP` package.
+1. Вызывает унаследованный `input_write_step(...)`, который через `DBOS.run_step` проверяет и публикует workflow `input.json`.
+2. Выполняет предметную оркестрацию только через дочерние workflow и методы с `@DBOS.step`.
+3. Строит один `WorkflowResultT` из публичных результатов оркестрации.
+4. Вызывает унаследованный `result_write_step(...)`, который через `DBOS.run_step` выполняет протокол публикации результата workflow и возвращает тот же `WorkflowResultT`.
 
-Workflow source не должен запускать прямые `@playwright/mcp`, `npx`, OpenVPN или альтернативные browser/VPN launchers.
+`result_write_step(...)` всегда выполняет один порядок:
 
-Search queries должны выполняться через внутренний web search `Codex`, а не через browser runtime. `Codex` stage не должен открывать public search-engine result pages через Playwright `MCP`; browser runtime используется только для target source pages, выбранных из internal search results, site navigation, saved evidence или typed stage input.
+1. Проверяет точную модель `WorkflowResultT`; при уже существующем `result.json` требует равенство сохраненного и заново построенного результата, а при отсутствии файла атомарно публикует новый результат.
+2. Возвращает сохраненный результат без повторной проверки только при существующем успешном `VerificationResult`, digest и номер ревизии которого соответствуют этому результату; для workflow номер ревизии всегда равен `1`.
+3. Во всех остальных случаях вызывает `result_validate(...)` для текущего сохраненного результата.
+4. Общий runtime создает transient `VerificationDecision`, вычисляет SHA-256 канонической JSON-сериализации текущего результата и атомарно публикует `VerificationResult` с `result_revision_index=1`.
+5. При успешном решении возвращает тот же `WorkflowResultT`; при `WorkflowResultValidationError` сохраняет связанный ошибочный verdict и завершает DBOS step исключением.
 
-Каждый browser-backed action stage result, который открывает target URLs, должен иметь schema-valid `browsing_error_list` с объектами `{url, error}`. В этот список записываются все URL, по которым stage получил browser-visible отказ. Такие ошибки нельзя прятать только в неструктурированных artifact-ах или human-readable notes.
+Проверка уровня workflow является только механической проверкой итогового объекта. Отдельная семантическая проверка для workflow не запускается. Связанный `VerificationResult(status="failed", ...)` на этом уровне означает нарушение контракта результата и не запускает цикл исправления.
 
-Browser tools могут записывать только browser evidence artifacts под объявленные browser evidence write directories, когда browser tool получает явный filename argument для snapshot, screenshot, download или другого browser-owned artifact.
+Ожидаемая предметная ошибка выражается корректным `WorkflowResultT` со статусом `failed`. Такой результат получает связанный успешный `VerificationResult`, если `result_validate(...)` подтверждает, что он точно описывает конечный предметный исход.
 
-Browser page JavaScript должен быть чистым browser JavaScript, выполняемым через `browser_evaluate` или эквивалентный `page.evaluate` page context. Он может читать DOM, `window`, `document`, links, tables, visible text и browser-visible state, затем возвращать serializable data. Browser page JavaScript не должен использовать `browser_run_code_unsafe`, Node.js APIs, CommonJS или Node module systems, dynamic `import(...)`, `node:` modules, `fs`, `path`, `process`, `Buffer` или local filesystem access.
+Неожиданное инфраструктурное исключение не маскируется искусственным предметным результатом. Workflow оставляет корневой набор файлов незавершенным, сохраняет уже завершенные дочерние результаты и завершает вызов исключением для восстановления DBOS.
 
-Local result artifacts не должны открываться через browser tools с `file://`, `localhost` или `127.0.0.1`. Local artifacts читаются через normal filesystem access outside browser page context.
+### 5.2. Детерминированный шаг
+`WorkflowStepDeterministicBase.run(...)` выполняет:
 
-Semantic verification не должна использовать `jq`, shell one-liners with guessed JSON paths или brittle glob scripts over heterogeneous JSON artifacts. Schema validation уже выполняется workflow, а semantic verification читает current JSON artifacts as data. Если semantic verification inspect-ит JSON artifacts with local code, it must validate each parsed JSON value shape before field access and skip unrelated JSON artifact shapes.
+1. Проверку контекста выполнения и имеющегося состояния восстановления.
+2. Построение `InputT` через `input_build(execution_context, input_source)`.
+3. Атомарную публикацию неизменяемого `input.json`.
+4. При существующем `result.json` загружает его и принимает без повторной проверки только при успешном verdict с совпадающими digest и `result_revision_index=1`.
+5. При отсутствии `result.json` выполняет идемпотентный `artifact_prepare(...)`, строит `ResultT` через `result_build(...)` и атомарно публикует результат.
+6. Выполняет `result_validate(...)` для существующего или нового текущего результата.
+7. Общий runtime строит из решения проверки `VerificationResult` с `result_revision_index=1` и публикует `verification.json`.
+8. При успехе возвращает тот же `ResultT`; при ошибке механической проверки завершает шаг исключением.
 
-## Проверки
-Workflow-container project contract tests must cover the applicable owner sections from this document. For each changed workflow-container artifact, tests or semantic reread must cover every owner section that artifact implements, references, or changes. Проверки должны проверять текущие owner contracts напрямую и не должны опираться на частичный пересказ этих контрактов в этой секции.
+Ошибка механической проверки приводит к публикации связанного `VerificationResult(status="failed", ...)` и затем завершает шаг исключением. Детерминированный шаг не имеет внутреннего цикла повторов Codex.
+
+### 5.3. FSM шага Codex
+До первой попытки `WorkflowStepCodexBase.run(...)` проверяет контекст, строит и публикует `InputT`, создает состояние через `state_build(execution_context, step_input)` либо восстанавливает существующее состояние и выполняет идемпотентный `artifact_prepare(...)`.
+
+Одна попытка выполняется в таком порядке:
+
+1. Общий runtime рендерит action prompt.
+2. Codex возвращает структурированный ответ, который разбирается как точный `ActionOutputT`.
+3. Общий runtime материализует настроенные внешние деревья артефактов.
+4. Конкретный шаг строит `ResultT` через `result_from_action_build(...)`.
+5. Общий runtime атомарно публикует новый `result.json`, не удаляя прежний verdict, и переводит FSM в `result_published`.
+6. Общий runtime преобразует успешный возврат или `StepResultValidationError` из `result_validate(...)` в transient решение механической проверки.
+7. После успешной механической проверки обязательно запускается семантическая проверка, которая возвращает `VerificationDecision` без digest.
+8. Общий runtime вычисляет SHA-256 канонического текущего результата, строит `VerificationResult` с `result_revision_index`, равным текущему `attempt_index`, и атомарно публикует `verification.json`.
+9. При успехе FSM переходит в `completed`, и шаг возвращает `ResultT`.
+10. При исправимой ошибке FSM переходит в `verification_failed`, затем один раз увеличивает `attempt_index`, переходит в `ready` и начинает следующую попытку, если лимит не исчерпан.
+
+| Текущее состояние | Условие | Следующее состояние |
+| --- | --- | --- |
+| `ready` | Опубликован новый кандидат результата | `result_published` |
+| `result_published` | Опубликована ошибка механической или семантической проверки | `verification_failed` |
+| `result_published` | Опубликован успешный `VerificationResult` с digest текущего результата и текущим `attempt_index` | `completed` |
+| `verification_failed` | Зафиксирован переход к повтору | `ready` с увеличенным `attempt_index` |
+| `verification_failed` | Лимит исчерпан | Завершение шага исключением |
+| `completed` | Повторный вызов с тем же входом | Возврат уже принятого `ResultT` без внешней работы |
+
+### 5.4. Маршрутизация prompt
+Prompt получает только устойчивые пути текущего экземпляра:
+
+| Фаза | Передаваемые пути |
+| --- | --- |
+| Первая попытка действия | `input_path` |
+| Повторная попытка действия | `input_path`, `previous_attempt_result_path`, `previous_attempt_verification_path` |
+| Семантическая проверка | `input_path`, `step_result_path` |
+
+Все пути задаются относительно корня результатов текущего запуска. Абсолютные пути host и пути вне дерева результатов не входят в контракт prompt.
+
+Повторное действие читает предыдущий feedback из `verification.json`. Общий runtime не добавляет копию result JSON, отдельный список feedback или предыдущее внутреннее состояние в prompt context. Все предметные зависимости уже находятся в текущем `input.json`.
+
+### 5.5. Результат проверки
+`VerificationDecision` является transient результатом одной механической или семантической проверки:
+
+```json
+{"status": "success", "feedback_list": []}
+```
+
+или:
+
+```json
+{"status": "failed", "feedback_list": ["Return a non-empty summary."]}
+```
+
+Успех всегда имеет пустой `feedback_list`. Ошибка всегда содержит в `feedback_list` конкретные действия для исправления. Механическая и семантическая ошибки используют эту модель; после механической ошибки семантическая проверка не запускается.
+
+`VerificationResult` является сохраненной формой решения. Он содержит те же `status` и `feedback_list`, обязательный `result_digest` и обязательный `result_revision_index`. `result_digest` является 64 lowercase hex-символами SHA-256 канонической JSON-сериализации точной разобранной модели текущего `result.json`. Для канонизации runtime сериализует `model_dump(mode="json")` с отсортированными ключами и без необязательных пробелов, кодирует результат как UTF-8 и вычисляет SHA-256. Digest не зависит от форматирования исходного файла, порядка его ключей, состояния FSM или содержимого артефактов.
+
+`result_revision_index` связывает verdict с одной публикацией результата. Для workflow и детерминированного шага он равен `1`; для шага Codex он равен `attempt_index`, которому принадлежит текущая публикация. Две попытки могут вернуть одинаковые байты `result.json`, но иметь разные артефакты или внутреннее состояние, поэтому совпадающего digest недостаточно для приема verdict предыдущей попытки.
+
+| Поле сохраненного verdict | Содержание |
+| --- | --- |
+| `status` | Решение принять или отклонить связанный результат. |
+| `feedback_list` | Пустой список при успехе или конкретные исправления при ошибке. |
+| `result_digest` | Обязательный lowercase SHA-256 канонического текущего результата. |
+| `result_revision_index` | Обязательный номер публикации: `1` для workflow и детерминированного шага, текущий `attempt_index` для шага Codex. |
+
+Только общий runtime строит `VerificationResult` из `VerificationDecision`, текущего результата и его номера ревизии и записывает `verification.json`. Codex, prompt, предметный валидатор и конкретный шаг не вычисляют digest или revision и не возвращают сохраненный verdict. `VerificationResult.status` отвечает только на вопрос: «Можно ли принять эту публикацию `result.json`, определенную парой `result_digest` и `result_revision_index`?». Он не является предметным исходом и не заменяет `WorkflowResult.status`.
+
+### 5.6. Классификация ошибок и повторов
+| Событие | Владелец решения | Поведение |
+| --- | --- | --- |
+| Ошибка разбора структурированного ответа | Низкоуровневый `CodexRunner` | Повторяет вызов Codex по `CodexExecutionRetryPolicy`; `ResultT` еще не существует. |
+| `StepResultValidationError` в шаге Codex | Механическая граница | Создает ошибочное решение; runtime связывает его с текущим результатом, публикует verdict и направляет попытку в цикл исправления Codex. |
+| `StepResultValidationError` в детерминированном шаге | Механическая граница | Создает ошибочное решение; runtime связывает его с текущим результатом, публикует verdict и завершает шаг исключением без повторного действия. |
+| Ошибка семантической проверки | Семантическая проверка | Возвращает `VerificationDecision` с конкретными действиями для исправления; runtime публикует связанный verdict и направляет попытку в цикл исправления Codex. |
+| Исчерпан лимит попыток | `WorkflowStepCodexBase` | Завершает шаг исключением, сохраняя последние `VerificationResult(status="failed", ...)` и `WorkflowStepCodexState`. |
+| `CodexExecutionError` после исчерпания низкоуровневых попыток | Граница `CodexRunner` | Пробрасывает исключение наружу; предметный workflow не превращает его в `error_list`. Сохраненные файлы позволяют вызывающей платформе явно инициировать восстановление. |
+| Ошибка файловой системы, конфигурации или материализации | Граница общей среды выполнения | Не превращает инфраструктурную ошибку в `feedback_list`; завершает текущий вызов исключением. |
+| Несовпадающий input или противоречивое состояние | Граница восстановления | Завершает вызов явной ошибкой без молчаливого исправления. |
+| Ожидаемая конечная предметная ошибка | Конкретный workflow | Возвращает валидный `WorkflowResultT` со статусом `failed`. |
+
+Автоматических retry-механизмов два: низкоуровневый повтор вызова в `CodexRunner` и исправление результата в `WorkflowStepCodexBase`. DBOS обеспечивает durable history и replay при явно инициированном восстановлении, но методы-обертки шага не объявляют собственную автоматическую retry-политику.
+
+### 5.7. Атомарная публикация и восстановление
+Перед публикацией модели или вычислением digest общий runtime создает plain Python snapshot через `model_dump(mode="python")`, повторно проверяет его точным `type(value)` и использует только полученный канонический объект. Это закрывает обход `validate_assignment` через изменение вложенного списка или словаря на уже созданной модели. `JsonArtifactWriter`, `SqliteStateStore` и построение `VerificationResult` применяют один и тот же принцип.
+
+`JsonArtifactWriter` пишет проверенный snapshot во временный путь рядом с целевым, выполняет `flush`, `fsync`, атомарную замену и синхронизацию каталога. Конкретные проекты не реализуют собственную запись стандартных файлов.
+
+`input.json` неизменяем внутри одного каталога экземпляра. Повтор с эквивалентным проверенным input использует существующий файл. Другой input в том же каталоге является ошибкой идентичности. Отсутствующий `input.json` можно создать только в новом пустом экземпляре; если каталог уже содержит result, verdict, private state, diagnostics или предметные артефакты, runtime завершает восстановление ошибкой и не присваивает существующим данным новую входную identity.
+
+Шаг Codex создает начальный `state.json` только до начала первой попытки, когда в каталоге существует лишь проверенный `input.json`. Если `state.json` отсутствует, но уже есть result, verdict, diagnostics или предметные артефакты, runtime не создает состояние с `attempt_index=1`: номер попытки и оставшийся budget больше нельзя однозначно восстановить, поэтому bundle считается противоречивым.
+
+Общий runtime не удаляет прежний `verification.json` перед публикацией нового `result.json`. Старый verdict может временно сосуществовать с новой публикацией результата. Если содержимое результата изменилось, различается `result_digest`; если байты результата совпали, но изменилась попытка, артефакты или private state, различается `result_revision_index`. После validation и, когда требуется, semantic verification runtime атомарно заменяет `verification.json` новым verdict. Такая последовательность не создает delete-first окна.
+
+Verdict считается актуальным только после строгого разбора `result.json` и `verification.json` и проверки `VerificationResult.is_bound_to(result, result_revision_index=...)`. Отсутствующий verdict или несовпадающий digest/revision означает, что текущая публикация еще не подтверждена.
+
+При restart runtime использует следующую матрицу:
+
+| Найденные данные | Действие |
+| --- | --- |
+| Совпадающий input, валидный result, успешный verification с совпадающими digest и revision | Вернуть существующий result без внешней работы. |
+| `input.json` отсутствует, но в каталоге уже есть более поздние lifecycle-файлы или артефакты | Завершить восстановление ошибкой идентичности; не создавать новый input. |
+| Input без result и состояние, допускающее выполнение действия | Продолжить выполнение по внутреннему состоянию и уже созданным артефактам. |
+| Шаг Codex без `state.json`, но с более поздними lifecycle-файлами или артефактами | Завершить восстановление ошибкой противоречивого bundle; не сбрасывать `attempt_index` и budget. |
+| Результат workflow без verdict или с verdict другой identity | DBOS детерминированно повторяет код оркестрации, но воспроизводит завершенные дочерние workflow и steps из durable history без повторной внешней работы. `result_write_step(...)` требует равенство заново построенного и сохраненного `WorkflowResultT`, повторяет `result_validate(...)` и публикует verdict с revision `1`. |
+| Результат детерминированного шага без verdict или с verdict другой identity | Загрузить существующий `ResultT`, выполнить только `result_validate(...)`, опубликовать verdict с revision `1` и вернуть результат либо снова завершить шаг через `StepResultValidationError`. `artifact_prepare(...)`, `result_build(...)` и внешние действия не повторять. |
+| Результат шага Codex без verdict или с verdict другой identity, состояние `result_published` | Проверить текущий результат и артефакты, повторить `result_validate(...)`, затем обязательную семантическую проверку и опубликовать verdict с текущим `attempt_index`. Действие Codex не повторять. |
+| Состояние Codex `ready`, опубликованный result отличается от result предыдущего verdict | Согласовать FSM до `result_published`, проверить уже опубликованный результат и не повторять action, которое его создало. |
+| Состояние Codex `ready`, байты result совпадают, а verdict принадлежит предыдущей revision | Сначала повторить validation и semantic verification текущих артефактов. Успех принимает результат и публикует verdict текущей revision; ошибка запускает action уже открытой текущей попытки без дополнительного увеличения `attempt_index`. |
+| Связанный ошибочный verdict workflow | Повторно проверить уже опубликованный `WorkflowResultT` через `result_validate(...)`; при неизменной ошибке сохранить новый связанный ошибочный verdict и снова поднять `WorkflowResultValidationError`. Если текущий валидатор принимает результат, заменить verdict на связанный успешный и вернуть тот же результат. |
+| Связанный ошибочный verdict детерминированного шага | Повторно проверить уже опубликованный `ResultT` через `result_validate(...)`; при неизменной ошибке сохранить новый связанный ошибочный verdict и снова поднять `StepResultValidationError`, не вызывая `artifact_prepare(...)`, `result_build(...)` или внешние действия. Если текущий валидатор принимает результат, заменить verdict на связанный успешный и вернуть тот же результат. |
+| Связанный ошибочный verdict шага Codex и состояние `result_published` | Согласовать состояние до `verification_failed`. |
+| Связанный ошибочный verdict шага Codex, состояние `verification_failed` и неисчерпанный лимит | Один раз увеличить `attempt_index` и атомарно перейти в `ready`. |
+| Связанный ошибочный verdict шага Codex и исчерпанный лимит | Повторно завершить шаг исключением без изменения `attempt_index` и без нового действия Codex. |
+| Связанный ошибочный verdict шага Codex и состояние `completed` | Завершить вызов ошибкой несогласованного состояния; завершенный шаг не может иметь связанный ошибочный verdict. |
+| Состояние опережает отсутствующие стандартные файлы | Завершить вызов ошибкой несогласованного состояния. |
+| Несовпадающий input, некорректный JSON или несовместимая SQLite schema/state database | Завершить вызов явной ошибкой восстановления. |
+
+Стандартные файлы являются единственным источником истины для завершенных переходов публикации, но `result.json` и `verification.json` образуют принятую пару только при совпадающих digest и revision. Внутренний checkpoint FSM может отставать не более чем на одну атомарную публикацию и продвигается вперед только при однозначном соответствии стандартным файлам.
+
+Workflow или DBOS step считается завершенным после устойчивой публикации полного набора восстановления: стандартных файлов, объявленных созданных артефактов, используемого внутреннего состояния, используемой SQLite state database и материализованных внешних файлов, необходимых для повторной validation или verification.
+
+## 6. Разработка конкретного контейнера
+
+### 6.1. Минимальный стабильный контракт
+Одно смысловое понятие имеет одну минимальную стабильную модель на своей границе. Другие слои передают эту модель, вкладывают ее целиком, ссылаются на ее артефакт или вычисляют производное значение.
+
+Разные роли не должны зеркалить одинаковые данные:
+
+- result workflow описывает итог workflow;
+- result шага описывает итог одного шага;
+- типизированный input описывает вход текущего владельца;
+- внутреннее состояние поддерживает восстановление того же владельца;
+- объявленный артефакт хранит отдельные публичные данные;
+- audit view вычисляется из стабильного источника.
+
+Первый способ исправления неясной границы: удалить лишнее поле, объект, владельца, прокси или слой совместимости; переиспользовать существующую модель; либо перенести поведение к владельцу данных. Новая абстракция допускается только тогда, когда она устраняет реальное дублирование, создает одну стабильную границу или делает проверку и восстановление проще прямого решения.
+
+После правки необходимо перечитать измененную и непосредственно затронутую границу. До передачи результата удаляются избыточные сохраненные данные, повторные каналы результата проверки, прокси-слои, переходные состояния, скопированный текст схемы, повторяющиеся инструкции prompt, построение межшагового результата внутри валидатора и неясное владение.
+
+### 6.2. Результат workflow
+Конкретный `WorkflowResultT` наследуется непосредственно от общего `WorkflowResult` из `workflow-container-contract`. Между ними не создается adapter с теми же полями.
+
+Общий result содержит:
+
+- `status: Literal["success", "failed"]`;
+- `error_list: list[str]`;
+- `warning_list: list[str]`.
+
+`status="failed"` используется тогда и только тогда, когда `error_list` текущего workflow непустой. `error_list` содержит только ошибки, делающие результат этого workflow непригодным. Предупреждения, доказанное отсутствие данных, ошибки отдельных дочерних объектов и типизированные пробелы в полноте сами по себе не делают родительский результат ошибочным: они остаются в своих структурированных предметных полях. Частичный предметный результат является успешным, если предметный контракт разрешает такую полноту.
+
+Свободное поле `message`, дублирующее ошибки, предупреждения или `status`, запрещено. Точка входа контейнера один раз сериализует итоговый `WorkflowResultT` через `model_dump(mode="json")`; платформа не строит вторую модель результата.
+
+Имя с суффиксом `_json` обозначает сериализованный текст JSON. Валидированная модель использует имя модели, а совместимый с JSON словарь на внешней границе использует суффикс `_payload`.
+
+### 6.3. Правила prompt
+Prompt является исполняемым контрактом, а не набором общих советов. Сначала определяется роль текста, затем выбирается минимальная подходящая структура:
+
+| Форма | Когда применяется |
+| --- | --- |
+| Contract | Входы, выходы, schemas, артефакты, инструменты, naming и владение. |
+| FSM | Попытки, повторы, заблокированное состояние, отмена, восстановление и конечные переходы. |
+| Workflow или Step Sequence | Линейная процедура без самостоятельной state machine. |
+| Persistent State | Значимые данные, которые нужны после текущего локального действия. |
+| Recovery | Известный вид ошибки с однозначным корректирующим действием. |
+
+Это инструменты структуры, а не обязательные заголовки. Prompt содержит только те блоки, которые соответствуют его поведению. Несколько обязанностей разделяются на отдельные смысловые блоки или явную последовательность.
+
+Значимая структура сохраняется на ближайшей стабильной границе сразу после создания, если она нужна семантической проверке, повтору, перезапуску, следующему шагу или внешнему потребителю. В памяти остаются только временные значения текущего локального действия.
+
+Понятные человеку инструкции не хранятся в многострочных строках Python. Prompt действия является полным шаблоном Jinja2 `{step_key}.md.j2`, а prompt семантической проверки имеет имя `{step_key}_verify.md.j2`. Каждый `WorkflowStepCodexBase` обязан иметь оба шаблона; отключение или формальная пустая реализация семантической проверки запрещены. Детерминированный шаг не имеет этих шаблонов; общий runtime строит его `VerificationResult` из решения механической проверки. Общие фрагменты и system prompts принадлежат `workflow-container-runtime` и доступны только через защищенный префикс `runtime/`, включая имена `runtime/system/...`. Предметные шаблоны принадлежат конкретному контейнеру и используют имена без этого префикса. Project template не может перекрыть ресурс `runtime/...`.
+
+Prompt не копирует JSON Schema из модели Pydantic и не пересказывает механические проверки. Нейтральные учебные примеры допустимы в этом документе; предметные примеры и правила принадлежат конкретному контейнеру.
+
+### 6.4. Механическая и семантическая проверка
+Pydantic отвечает за JSON Schema, строгие типы и запрет дополнительных полей.
+
+У конкретного шага есть одна публичная механическая граница:
+
+```python
+result_validate(execution_context, step_input, result) -> None
+```
+
+Она проверяет межполевые инварианты, существование артефактов, нахождение их путей внутри разрешенного дерева и детерминированные отношения между `InputT` и `ResultT`. При исправимой ошибке она выбрасывает `StepResultValidationError` с конкретными инструкциями в `feedback_list`.
+
+Механический валидатор:
+
+- не пишет артефакты;
+- не строит input следующего шага;
+- не возвращает список ошибок;
+- не повторяет JSON Schema модели Pydantic;
+- не определяет смысловую корректность внешнего источника.
+
+Семантическая проверка получает результат, уже прошедший разбор Pydantic и механическую проверку. Она проверяет смысл, согласованность текущих артефактов и, когда применимо, соответствие источнику и сохраненным доказательствам. Она возвращает только transient `VerificationDecision`, не вычисляет digest или revision, не пишет состояние или артефакты и не создает второй канал ошибки. Общий runtime связывает это решение с текущей публикацией результата и публикует `VerificationResult`.
+
+### 6.5. Полный пример простого workflow
+Пример показывает один workflow с одним шагом Codex. Он суммирует входной текст и не использует browser или дополнительные артефакты. Имена учебных классов не являются частью публичного runtime API; сигнатуры базовых классов являются нормативными.
+
+#### Модели
+```python
+from typing import ClassVar
+
+from dbos import DBOS, DBOSConfiguredInstance, pydantic_args_validator
+from pydantic import BaseModel, ConfigDict
+
+from workflow_container_contract import WorkflowResult
+from workflow_container_runtime.artifact.materializer import ArtifactMaterializationPolicy, ArtifactMaterializer
+from workflow_container_runtime.artifact.writer import JsonArtifactWriter
+from workflow_container_runtime.codex.runner import CodexRunner
+from workflow_container_runtime.prompt.renderer import PromptRenderer
+from workflow_container_runtime.retry import CodexExecutionRetryPolicy
+from workflow_container_runtime.step.base import StepResultValidationError, WorkflowStepCodexBase
+from workflow_container_runtime.step.codex import (
+    WorkflowStepCodexConfig,
+    WorkflowStepCodexState,
+)
+from workflow_container_runtime.step.context import WorkflowStepExecutionContext
+from workflow_container_runtime.workflow.base import WorkflowBase
+from workflow_container_runtime.workflow.context import WorkflowExecutionContext
+
+
+class ExampleModel(BaseModel):
+    """Strict base model used only by this example."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, validate_assignment=True, validate_default=True)
+
+
+class TextSummaryWorkflowInput(ExampleModel):
+    """Public input of the example workflow."""
+
+    text: str
+
+
+class TextSummaryStepInput(ExampleModel):
+    """Persisted public input of the Codex step."""
+
+    workflow_input: TextSummaryWorkflowInput
+
+
+class TextSummaryActionOutput(ExampleModel):
+    """Data owned by the Codex action."""
+
+    summary: str
+
+
+class TextSummaryStepResult(ExampleModel):
+    """Public result of the Codex step."""
+
+    summary: str
+
+
+class TextSummaryWorkflowResult(WorkflowResult):
+    """Public result of the example workflow."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, validate_assignment=True, validate_default=True)
+
+    summary_result: TextSummaryStepResult
+```
+
+`TextSummaryWorkflowInput` используется непосредственно как `InputSourceT`: дополнительная wrapper model не нужна. `TextSummaryStepInput` вкладывает исходный объект целиком и не копирует поле `text` в новую форму идентичности.
+
+#### Конкретный шаг
+```python
+class TextSummaryStep(
+    WorkflowStepCodexBase[
+        TextSummaryWorkflowInput,
+        TextSummaryStepInput,
+        TextSummaryActionOutput,
+        TextSummaryStepResult,
+    ]
+):
+    """Build one verified summary from workflow input."""
+
+    action_output_model: ClassVar[type[TextSummaryActionOutput]] = TextSummaryActionOutput
+    result_model: ClassVar[type[TextSummaryStepResult]] = TextSummaryStepResult
+    state_model: ClassVar[type[WorkflowStepCodexState]] = WorkflowStepCodexState
+    step_key: ClassVar[str] = "text_summarize"
+
+    def input_build(
+        self,
+        execution_context: WorkflowStepExecutionContext,
+        input_source: TextSummaryWorkflowInput,
+    ) -> TextSummaryStepInput:
+        """Build the persisted step input from the public workflow input."""
+
+        _ = execution_context
+        return TextSummaryStepInput(workflow_input=input_source)
+
+    def result_from_action_build(
+        self,
+        execution_context: WorkflowStepExecutionContext,
+        step_input: TextSummaryStepInput,
+        action_output: TextSummaryActionOutput,
+    ) -> TextSummaryStepResult:
+        """Build the public step result from action-owned data."""
+
+        return TextSummaryStepResult(summary=action_output.summary)
+
+    def result_validate(
+        self,
+        execution_context: WorkflowStepExecutionContext,
+        step_input: TextSummaryStepInput,
+        result: TextSummaryStepResult,
+    ) -> None:
+        """Reject an empty summary before semantic verification."""
+
+        if not result.summary.strip():
+            raise StepResultValidationError(feedback_list=["Return a non-empty summary."])
+```
+
+`TextSummaryStep` наследует точный конструктор `WorkflowStepCodexBase`; дополнительных зависимостей у предметного шага нет.
+
+#### DBOS workflow
+```python
+@DBOS.dbos_class("TextSummaryWorkflow")
+class TextSummaryWorkflow(
+    WorkflowBase[TextSummaryWorkflowInput, TextSummaryWorkflowResult],
+    DBOSConfiguredInstance,
+):
+    """Orchestrate one text-summary step."""
+
+    def __init__(
+        self,
+        *,
+        artifact_writer: JsonArtifactWriter,
+        instance_name: str,
+        summary_step: TextSummaryStep,
+    ) -> None:
+        """Store the reusable step dependency."""
+
+        WorkflowBase.__init__(self, artifact_writer=artifact_writer)
+        DBOSConfiguredInstance.__init__(self, instance_name)
+        self._summary_step = summary_step
+
+    @DBOS.workflow(name="text_summary", validate_args=pydantic_args_validator)
+    def run(
+        self,
+        execution_context: WorkflowExecutionContext,
+        workflow_input: TextSummaryWorkflowInput,
+    ) -> TextSummaryWorkflowResult:
+        """Publish input, run the domain step, and publish the workflow result."""
+
+        self.input_write_step(
+            execution_context=execution_context,
+            workflow_input=workflow_input,
+        )
+        summary_result = self.text_summarize_write_step(
+            execution_context=execution_context.for_step(
+                step_instance_key="text_summarize",
+                runtime_capability=execution_context.runtime_capability,
+            ),
+            workflow_input=workflow_input,
+        )
+        workflow_result = TextSummaryWorkflowResult(
+            status="success",
+            error_list=[],
+            warning_list=[],
+            summary_result=summary_result,
+        )
+        return self.result_write_step(
+            execution_context=execution_context,
+            workflow_input=workflow_input,
+            workflow_result=workflow_result,
+        )
+
+    @DBOS.step(name="text_summarize_write_step")
+    def text_summarize_write_step(
+        self,
+        execution_context: WorkflowStepExecutionContext,
+        workflow_input: TextSummaryWorkflowInput,
+    ) -> TextSummaryStepResult:
+        """Execute the semantic step inside one durable DBOS boundary."""
+
+        return self._summary_step.run(
+            execution_context=execution_context,
+            input_source=workflow_input,
+        )
+```
+
+Метод workflow выполняет только оркестрацию. Внешняя работа шага происходит внутри вызова `TextSummaryStep.run(...)` из синхронного метода с `@DBOS.step`. `TextSummaryWorkflowResult` включает устойчивый `TextSummaryStepResult` целиком и не создает вторую форму данных сводки.
+
+#### Сборка зависимостей
+Корень сборки получает инфраструктурные сервисы от точки входа контейнера и один раз создает неизменяемые экземпляры шага и workflow:
+
+```python
+def build_text_summary_workflow(
+    *,
+    artifact_materializer: ArtifactMaterializer,
+    artifact_writer: JsonArtifactWriter,
+    codex_runner: CodexRunner,
+    instance_name: str,
+    prompt_renderer: PromptRenderer,
+) -> TextSummaryWorkflow:
+    """Build the configured example workflow and its step."""
+
+    summary_step = TextSummaryStep(
+        artifact_materializer=artifact_materializer,
+        artifact_writer=artifact_writer,
+        codex_runner=codex_runner,
+        config=WorkflowStepCodexConfig(
+            artifact_materialization_policy=ArtifactMaterializationPolicy(artifact_root_tuple=()),
+            attempt_limit=3,
+            execution_retry_policy=CodexExecutionRetryPolicy(attempt_limit=2),
+        ),
+        prompt_renderer=prompt_renderer,
+    )
+    return TextSummaryWorkflow(
+        artifact_writer=artifact_writer,
+        instance_name=instance_name,
+        summary_step=summary_step,
+    )
+```
+
+Пустой `artifact_root_tuple` явно отключает материализацию, потому что этому шагу не нужны внешние артефакты. Точка входа отдельно создает `WorkflowExecutionContext` из каталога запуска и разрешенных возможностей среды выполнения; эти данные не хранятся в `TextSummaryWorkflow` или `TextSummaryStep`.
+
+#### Prompt templates
+`text_summarize.md.j2`:
+
+```markdown
+# Task
+Read the workflow input from `{{ input_path }}` and produce a concise summary of its `text` value.
+
+# Sequence
+1. Read and validate the current input file.
+2. Summarize only information present in the input.
+3. Return the structured action output required by the provided schema.
+```
+
+`text_summarize_verify.md.j2`:
+
+```markdown
+# Verification
+Read `{{ input_path }}` and `{{ step_result_path }}`. Accept the current result only when the summary is faithful to the input, contains no invented facts, and preserves the central meaning. Return only `VerificationDecision`; the runtime binds it to the current result and writes `verification.json`.
+```
+
+#### Результирующее дерево
+```text
+<result_dir>/workflow/text_summary/
+  input.json                         # TextSummaryWorkflowInput
+  result.json                        # TextSummaryWorkflowResult
+  verification.json                  # VerificationResult
+  step/text_summarize/
+    input.json                       # TextSummaryStepInput
+    result.json                      # TextSummaryStepResult
+    verification.json                # VerificationResult
+    state.json                       # WorkflowStepCodexState
+```
+
+Следующий workflow или шаг получает `TextSummaryWorkflowResult` или `TextSummaryStepResult` через возврат DBOS. Он не читает `step/text_summarize/state.json`.
+
+### 6.6. Минимальные требования к коду
+Workflow-container projects используют Python 3.14, `Black` с `target-version = ["py314"]` и `line-length = 120`, а также `pytest`. Runtime package после изменения поведения Python дополнительно проходит `python -m compileall <package>`.
+
+Публичный API, точки входа workflow, интерфейсы шагов, стабильные границы и нетривиальные модули имеют type annotations и docstrings, описывающие реальное поведение. Стабильные config, input, result, state и ссылки на артефакты являются строгими Pydantic v2 models. JSON schemas генерируются из моделей.
+
+Импорты кода проекта находятся на уровне модуля. Локальные импорты внутри функций и методов, резервные импорты, динамические импорты кода проекта и отложенные ошибки отсутствующей зависимости в рабочем коде запрещены.
+
+Рефакторинг оставляет код в окончательном состоянии. Слои совместимости, перенаправляющие псевдонимы, прокси-обертки, повторные фрагменты prompt, повторные сгенерированные схемы и локальные копии кода общей среды выполнения удаляются в той же согласованной правке.
+
+Эти минимальные требования не переносят частные правила именования, ORM, production-баз данных и другие вкусовые ограничения закрытых проектов.
+
+## 7. Среда выполнения
+
+### 7.1. Контейнер, секреты и writeback
+Private input монтируется только для чтения в `/input/.secret`. До запуска workflow контейнер копирует его в доступный для записи pod-local `/runtime/.secret` с корректными правами. Workflow и Codex используют только runtime copy; `CODEX_HOME` не указывает на read-only mount.
+
+Процесс workflow, установка зависимостей, DBOS и Codex используют обычный сетевой путь. Только `vpn-egress` gateway владеет OpenVPN, `tun0` и его сетевым namespace. Playwright работает в отдельном namespace, обращается к gateway через SOCKS и предоставляет workflow готовый MCP URL.
+
+Обратную запись выполняет владелец платформы только для объявленных изменяемых префиксов входа. Snapshot создается во временном соседнем каталоге, права владельца применяются к временному дереву, затем дерево атомарно заменяет target. После публикации права не изменяются.
+
+Docker Compose и Kubernetes реализуют одинаковые правила монтирования, сети, локальной копии внутри pod и обратной записи. Bind mount, пригодный только для разработки, или общий сетевой namespace VPN не является production-контрактом.
+
+### 7.2. Граница Codex
+Подпроцесс Codex внутри workflow container не включает собственный filesystem sandbox. Файловая граница задается контейнером или pod, смонтированными snapshots `DataSource` и доступными для записи выходными путями.
+
+Отключение Codex filesystem sandbox не переносит Codex в сетевой путь browser/VPN.
+
+### 7.3. Browser runtime
+Workflow получает готовый MCP URL browser runtime. Он не запускает `@playwright/mcp`, `npx`, OpenVPN или альтернативный browser/VPN launcher и не управляет browser flags, locale, timezone, viewport, материализацией профиля или выбором package.
+
+Поисковые запросы выполняются через встроенный веб-поиск Codex. Браузерная среда выполнения используется для целевых страниц, навигации по сайту и сохранения браузерных доказательств, а не для публичных страниц результатов поисковой системы.
+
+Browser-backed `ActionOutputT`, который открывает целевые URL, наследуется от `BrowserActionResult` общего runtime и возвращает `browsing_error_list: list[BrowsingError]`. Производный публичный `ResultT` сохраняет тот же список, чтобы сетевые ошибки оставались видимыми в `result.json`; следующий шаг получает весь стабильный `ResultT`, даже если использует только его предметные данные. Каждая видимая в браузере ошибка имеет точную форму `{url, error}`.
+
+Браузерные инструменты пишут доказательства только в объявленные целевые каталоги. JavaScript внутри `page.evaluate` является чистым браузерным JavaScript: API Node.js, CommonJS, динамические импорты и доступ к локальной файловой системе запрещены.
+
+Локальные артефакты читаются через файловую систему, а не браузерные инструменты с `file://`, `localhost` или loopback URL. Семантическая проверка читает разобранный JSON только через точную модель и не использует предполагаемые пути или хрупкие glob-скрипты.
+
+### 7.4. Материализация внешних артефактов
+`workflow-container-runtime` предоставляет независимую от источника политику материализации в виде упорядоченного неизменяемого кортежа корней артефактов. Пустой кортеж отключает материализацию.
+
+Каждый корень политики является абсолютным путем или путем относительно `result_dir` и зеркалит дерево экземпляров запуска. Для текущего шага `ArtifactMaterializer` берет поддерево `<artifact_root>/<step_instance_dir relative to result_dir>` и работает по политике корней, не выбирая файлы по ссылкам из результата.
+
+До первой записи materializer проверяет полное выбранное дерево: containment, отсутствие symlink и отсутствие пересечения с runtime-owned корневыми путями `input.json`, `result.json`, `state.json`, `state.sqlite3`, `verification.json` и `diagnostics/`. Одна ошибка отклоняет все дерево; безопасные соседние файлы не копируются частично. После успешной предварительной проверки каждый файл публикуется через временный соседний файл, `fsync`, атомарную замену и синхронизацию каталога, поэтому существующий target не проходит через видимое частично записанное состояние.
+
+Материализованные файлы, необходимые для повторной validation или verification, входят в набор восстановления. Конкретный workflow, prompt и действие не реализуют материализацию повторно.
+
+Корень сборки browser-backed шага явно создает `ArtifactMaterializationPolicy(artifact_root_tuple=(Path(".playwright-mcp/current"),))`, если этому шагу нужны браузерные доказательства. Пустой кортеж явно отключает материализацию. Имена политики и API `ArtifactMaterializer` остаются независимыми от источника.
+
+## 8. Проверка реализации
+Исполняемое поведение общего runtime проверяется автоматизированными behavior tests. Обязательное покрытие включает:
+
+- публичные интерфейсы классов;
+- жизненный цикл детерминированного шага;
+- переходы FSM Codex;
+- механические и семантические ошибки;
+- повторную проверку точных snapshot перед JSON/SQLite publication и вычислением digest;
+- атомарную публикацию, обязательные digest/revision и соответствие `result.json`/`verification.json`;
+- восстановление после перезапуска;
+- ошибки identity при отсутствующем input или состоянии уже начатого экземпляра;
+- изоляцию внутреннего состояния;
+- создание SQLite-таблиц из точных моделей, обычный и составной первичный ключ без отдельного склеенного столбца, проверяемые CRUD и чтение по ведущему префиксу ключа, детерминированный порядок строк, идемпотентный `upsert` и восстановление;
+- producer для динамической идентичности выводит target только из проверенного ключа внутри объявленного root, не принимает путь действия и идемпотентно обрабатывает повтор того же объекта;
+- containment артефактов;
+- all-or-nothing материализацию без доступа к runtime-owned путям;
+- защищенный `runtime/` namespace prompt resources;
+- полный пример или эквивалентный integration path через конкретный workflow.
+
+`workflow.yaml` и `versions.yaml` проверяются загрузчиками и повторно используемыми checks из `workflow-container-contract`. Конкретные проекты вызывают эти checks для собственных файлов и не копируют tests загрузчиков.
+
+Семантика prompt и инструкций проверяется внимательным повторным чтением и `workflow-container-audit`. Тесты Pytest, которые проверяют наличие конкретных фраз, заголовков, примеров или расположение файлов инструкций, запрещены.
+
+После изменения проверяются все разделы-владельцы этого документа, которые измененный артефакт реализует или на которые он опирается. Частичный пересказ не заменяет канонический контракт.
+
+## Приложение A. Публичные интерфейсы
+Этот раздел является точным API-контрактом. Основной текст объясняет назначение интерфейсов, но не переопределяет их сигнатуры.
+
+В следующих фрагментах используются эти стандартные импорты:
+
+```python
+from __future__ import annotations
+
+from abc import abstractmethod
+from collections.abc import Mapping
+from pathlib import Path
+from typing import ClassVar, Generic, Literal, Self, final
+
+from dbos import DBOS, pydantic_args_validator
+from pydantic import BaseModel, Field
+```
+
+```python
+def state_database_path_get(instance_dir: Path) -> Path:
+    ...
+
+
+class ArtifactMaterializationPolicy(BaseModel):
+    artifact_root_tuple: tuple[Path, ...]
+
+
+class BrowserRuntimeCapability(BaseModel):
+    mcp_url: str
+
+
+class BrowsingError(BaseModel):
+    error: str
+    url: str
+
+
+class BrowserActionResult(BaseModel):
+    browsing_error_list: list[BrowsingError]
+
+
+class CodexRunnerConfig(BaseModel):
+    model: str = Field(min_length=1)
+    model_reasoning_effort: Literal["low", "medium", "high", "xhigh", "max", "ultra"]
+
+
+class CodexExecutionRetryPolicy(BaseModel):
+    attempt_limit: int = Field(ge=1)
+
+
+class WorkflowRuntimeCapability(BaseModel):
+    browser: BrowserRuntimeCapability | None
+
+
+class WorkflowStepExecutionContext(BaseModel):
+    result_dir: Path
+    runtime_capability: WorkflowRuntimeCapability
+    step_instance_dir: Path
+
+
+class WorkflowExecutionContext(BaseModel):
+    result_dir: Path
+    runtime_capability: WorkflowRuntimeCapability
+    workflow_instance_dir: Path
+
+    def for_child_workflow(
+        self,
+        *,
+        runtime_capability: WorkflowRuntimeCapability,
+        workflow_instance_key: str,
+    ) -> WorkflowExecutionContext:
+        ...
+
+    def for_step(
+        self,
+        *,
+        runtime_capability: WorkflowRuntimeCapability,
+        step_instance_key: str,
+    ) -> WorkflowStepExecutionContext:
+        ...
+
+
+class WorkflowStepCodexConfig(BaseModel):
+    artifact_materialization_policy: ArtifactMaterializationPolicy
+    attempt_limit: int = Field(ge=1)
+    execution_retry_policy: CodexExecutionRetryPolicy
+
+
+class WorkflowStepCodexState(BaseModel):
+    attempt_index: int = Field(ge=1)
+    state: Literal["ready", "result_published", "verification_failed", "completed"]
+
+
+class VerificationDecision(BaseModel):
+    feedback_list: list[str]
+    status: Literal["success", "failed"]
+
+
+class VerificationResult(VerificationDecision):
+    result_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    result_revision_index: int = Field(ge=1)
+
+    @classmethod
+    def from_decision(
+        cls,
+        *,
+        decision: VerificationDecision,
+        result: BaseModel,
+        result_revision_index: int,
+    ) -> Self:
+        ...
+
+    def is_bound_to(self, result: BaseModel, *, result_revision_index: int) -> bool:
+        ...
+
+
+class SqliteStateTable[RecordT: BaseModel](BaseModel):
+    name: str
+    primary_key_field_name_tuple: tuple[str, ...]
+    record_model: type[RecordT]
+```
+
+Все Pydantic-модели в этом блоке используют строгую конфигурацию. `ArtifactMaterializationPolicy`, `BrowserRuntimeCapability`, `CodexExecutionRetryPolicy`, `CodexRunnerConfig`, `WorkflowExecutionContext`, `WorkflowStepExecutionContext`, `WorkflowRuntimeCapability` и `WorkflowStepCodexConfig` дополнительно используют `frozen=True`; их поля нельзя менять после создания. `WorkflowStepCodexState` остается изменяемым состоянием. `SqliteStateTable` является неизменяемым описателем одной разрешенной таблицы и не хранит строки состояния.
+
+`VerificationDecision` запрещает непустой `feedback_list` при `status="success"` и требует непустой `feedback_list` при `status="failed"`. `VerificationResult.result_digest` обязателен и содержит SHA-256 канонической JSON-сериализации переданной точной модели результата. `VerificationResult.result_revision_index` обязателен и связывает verdict с одной публикацией результата. `from_decision(...)` является runtime-owned способом построения сохраненного verdict; `is_bound_to(...)` принимает ожидаемую revision и является обязательной проверкой перед приемом verdict при recovery.
+
+`WorkflowRuntimeCapability` расширяется только явными необязательными полями, тип которых является отдельной моделью общей среды выполнения. Конкретный проект не добавляет в него предметные данные. Физические модули-владельцы всех интерфейсов перечислены один раз в `Приложение B. Структура workflow-container-runtime`.
+
+`state_database_path_get(...)` является единственным владельцем стандартного соседнего пути `state.sqlite3`. Конкретные проекты и обертки команд не собирают это имя вручную.
+
+`WorkflowStepCodexConfig.attempt_limit` ограничивает число исправляющих попыток всего шага. `CodexExecutionRetryPolicy.attempt_limit` отдельно ограничивает низкоуровневые повторы одного вызова Codex до получения валидного структурированного ответа. Оба значения задаются явно.
+
+```python
+class JsonArtifactWriter:
+    def schema_write(self, path: Path, model: type[BaseModel]) -> None:
+        ...
+
+    def write(self, path: Path, value: BaseModel) -> None:
+        ...
+
+
+class SqliteStateStore:
+    def initialize(self, path: Path, table_list: list[SqliteStateTable[BaseModel]]) -> None:
+        ...
+
+    def upsert[RecordT: BaseModel](
+        self,
+        path: Path,
+        table: SqliteStateTable[RecordT],
+        record: RecordT,
+    ) -> RecordT:
+        ...
+
+    def get[RecordT: BaseModel](
+        self,
+        path: Path,
+        table: SqliteStateTable[RecordT],
+        primary_key_value_tuple: tuple[object, ...],
+    ) -> RecordT | None:
+        ...
+
+    def list[RecordT: BaseModel](
+        self,
+        path: Path,
+        table: SqliteStateTable[RecordT],
+    ) -> list[RecordT]:
+        ...
+
+    def list_by_primary_key_prefix[RecordT: BaseModel](
+        self,
+        path: Path,
+        table: SqliteStateTable[RecordT],
+        primary_key_value_prefix_tuple: tuple[object, ...],
+    ) -> list[RecordT]:
+        ...
+
+    def delete[RecordT: BaseModel](
+        self,
+        path: Path,
+        table: SqliteStateTable[RecordT],
+        primary_key_value_tuple: tuple[object, ...],
+    ) -> None:
+        ...
+
+
+class SqliteStateReader:
+    def list[RecordT: BaseModel](
+        self,
+        path: Path,
+        table: SqliteStateTable[RecordT],
+    ) -> list[RecordT]:
+        ...
+
+
+class SqliteStateCommand:
+    def run(
+        self,
+        argument_list: list[str],
+        input_model: type[BaseModel],
+        table_by_name_map: dict[str, SqliteStateTable[BaseModel]],
+    ) -> int:
+        ...
+
+
+class ArtifactMaterializer:
+    def materialize(
+        self,
+        *,
+        policy: ArtifactMaterializationPolicy,
+        result_dir: Path,
+        step_instance_dir: Path,
+    ) -> None:
+        ...
+
+
+class PromptRenderer:
+    def render(
+        self,
+        *,
+        template_name: str,
+        variable_by_name_map: Mapping[str, str],
+    ) -> str:
+        ...
+
+
+class CodexRunner:
+    def __init__(
+        self,
+        *,
+        artifact_writer: JsonArtifactWriter,
+        config: CodexRunnerConfig,
+        prompt_renderer: PromptRenderer,
+        workflow_container_name: str,
+    ) -> None:
+        ...
+
+    def run[OutputT: BaseModel](
+        self,
+        *,
+        diagnostic_dir: Path,
+        output_model: type[OutputT],
+        prompt: str,
+        retry_policy: CodexExecutionRetryPolicy,
+        runtime_capability: WorkflowRuntimeCapability,
+        working_directory: Path,
+    ) -> OutputT:
+        ...
+```
+
+- `JsonArtifactWriter.schema_write(...)` атомарно публикует JSON Schema, полученную непосредственно из переданной Pydantic-модели; предметный код не сериализует schema вручную.
+- `SqliteStateStore` создает таблицы только из статически переданных `SqliteStateTable`, проверяет точную модель до записи и после чтения, выполняет один idempotent upsert по предметному primary key и не хранит историю предыдущих значений.
+- `SqliteStateReader.list(...)` является единственным публичным API downstream-чтения: он открывает только существующую объявленную базу через SQLite URI `mode=ro`, проверяет схему и возвращает строки в полном порядке primary key без изменения базы.
+- `SqliteStateCommand` вычисляет `state.sqlite3` только из текущего `input.json`, принимает одну разрешенную операцию и одну разрешенную таблицу, читает payload через `stdin` и не предоставляет Codex raw SQL или произвольный путь.
+- `PromptRenderer` принимает только переменные маршрутизации текущей фазы. Защищенный namespace `runtime/` разрешается только runtime loader, `runtime/system/...` является единственным путем к общим system prompts, а имена без префикса разрешаются из предметного template tree. Prompt читает предметные данные из `input.json`, текущего `result.json`, объявленных артефактов и внутренних recovery-файлов текущего владельца, детерминированно найденных через его `state.json`; другой workflow или шаг не получает доступ к этому внутреннему состоянию.
+- `CodexRunnerConfig` не имеет скрытых значений по умолчанию: composition root конкретного контейнера явно выбирает модель и reasoning один раз для общего `CodexRunner`.
+- `CodexRunner` отвечает только за один низкоуровневый вызов и не владеет FSM шага.
+- `CodexRunner` пишет diagnostics только в переданный детерминированный `diagnostic_dir`; рабочий каталог остается корнем результатов, относительно которого prompt разрешает публичные пути.
+
+```python
+class StepResultValidationError(RuntimeError):
+    feedback_list: list[str]
+
+    def __init__(self, *, feedback_list: list[str]) -> None:
+        ...
+
+
+class WorkflowResultValidationError(RuntimeError):
+    feedback_list: list[str]
+
+    def __init__(self, *, feedback_list: list[str]) -> None:
+        ...
+```
+
+Оба исключения требуют непустой `feedback_list`. Общий runtime преобразует исключение в `VerificationDecision`, связывает его с текущим результатом и публикует `VerificationResult`. `WorkflowStepCodexBase` направляет такое решение в цикл исправления; `WorkflowStepDeterministicBase` повторно поднимает исключение без цикла исправления; workflow завершает `result_write_step(...)` без цикла исправления.
+
+```python
+class WorkflowBase(Generic[WorkflowInputT, WorkflowResultT]):
+    def __init__(self, *, artifact_writer: JsonArtifactWriter) -> None:
+        ...
+
+    @final
+    def input_write_step(
+        self,
+        execution_context: WorkflowExecutionContext,
+        workflow_input: WorkflowInputT,
+    ) -> None:
+        ...
+
+    @final
+    def result_write_step(
+        self,
+        execution_context: WorkflowExecutionContext,
+        workflow_input: WorkflowInputT,
+        workflow_result: WorkflowResultT,
+    ) -> WorkflowResultT:
+        ...
+
+    def result_validate(
+        self,
+        execution_context: WorkflowExecutionContext,
+        workflow_input: WorkflowInputT,
+        workflow_result: WorkflowResultT,
+    ) -> None:
+        ...
+```
+
+Конкретный workflow добавляет один публичный метод:
+
+```python
+@DBOS.workflow(..., validate_args=pydantic_args_validator)
+def run(
+    self,
+    execution_context: WorkflowExecutionContext,
+    workflow_input: WorkflowInputT,
+) -> WorkflowResultT:
+    ...
+```
+
+`input_write_step(...)` и `result_write_step(...)` не переопределяются и каждый выполняет свою файловую операцию через `DBOS.run_step`. `result_validate(...)` может оставаться пустой реализацией только при отсутствии итоговых предметных инвариантов.
+
+```python
+class WorkflowStepBase(Generic[InputSourceT, InputT, ResultT]):
+    result_model: ClassVar[type[ResultT]]
+
+    def __init__(self, *, artifact_writer: JsonArtifactWriter) -> None:
+        ...
+
+    @final
+    def run(
+        self,
+        execution_context: WorkflowStepExecutionContext,
+        input_source: InputSourceT,
+    ) -> ResultT:
+        ...
+
+    @abstractmethod
+    def input_build(
+        self,
+        execution_context: WorkflowStepExecutionContext,
+        input_source: InputSourceT,
+    ) -> InputT:
+        ...
+
+    def artifact_prepare(
+        self,
+        execution_context: WorkflowStepExecutionContext,
+        step_input: InputT,
+    ) -> None:
+        ...
+
+    def result_validate(
+        self,
+        execution_context: WorkflowStepExecutionContext,
+        step_input: InputT,
+        result: ResultT,
+    ) -> None:
+        ...
+```
+
+Внутренний `_lifecycle_run(...)` принадлежит реализации общей среды выполнения и является `final` в ее конкретных подклассах. Он не входит в интерфейс, который реализует предметный шаг.
+
+```python
+class WorkflowStepDeterministicBase(
+    WorkflowStepBase[InputSourceT, InputT, ResultT],
+    Generic[InputSourceT, InputT, ResultT],
+):
+    @abstractmethod
+    def result_build(
+        self,
+        execution_context: WorkflowStepExecutionContext,
+        step_input: InputT,
+    ) -> ResultT:
+        ...
+```
+
+```python
+class WorkflowStepCodexBase(
+    WorkflowStepBase[InputSourceT, InputT, ResultT],
+    Generic[InputSourceT, InputT, ActionOutputT, ResultT],
+):
+    action_output_model: ClassVar[type[ActionOutputT]]
+    result_model: ClassVar[type[ResultT]]
+    state_model: ClassVar[type[WorkflowStepCodexState]]
+    step_key: ClassVar[str]
+
+    def __init__(
+        self,
+        *,
+        artifact_materializer: ArtifactMaterializer,
+        artifact_writer: JsonArtifactWriter,
+        codex_runner: CodexRunner,
+        config: WorkflowStepCodexConfig,
+        prompt_renderer: PromptRenderer,
+    ) -> None:
+        ...
+
+    def state_build(
+        self,
+        execution_context: WorkflowStepExecutionContext,
+        step_input: InputT,
+    ) -> WorkflowStepCodexState:
+        ...
+
+    @abstractmethod
+    def result_from_action_build(
+        self,
+        execution_context: WorkflowStepExecutionContext,
+        step_input: InputT,
+        action_output: ActionOutputT,
+    ) -> ResultT:
+        ...
+```
+
+`WorkflowStepDeterministicBase` наследует конструктор `WorkflowStepBase` без изменений. Имена templates шага Codex выводятся из `step_key`; поля с именами templates в config запрещены.
+
+`StepResultValidationError` имеет одно публичное поле `feedback_list: list[str]`. Список непустой и содержит действия, которые может выполнить следующая попытка Codex.
+
+## Приложение B. Структура workflow-container-runtime
+`workflow-container-runtime` владеет следующими модулями:
+
+| Путь | Ответственность |
+| --- | --- |
+| `workflow_container_runtime/capability.py` | Составная модель `WorkflowRuntimeCapability`. |
+| `workflow_container_runtime/codex/config.py` | Неизменяемая конфигурация модели и reasoning для `CodexRunner`. |
+| `workflow_container_runtime/codex/runner.py` | `CodexRunner` и только низкоуровневая граница подпроцесса Codex. |
+| `workflow_container_runtime/instance.py` | Проверка ключей и расположения каталогов экземпляров. |
+| `workflow_container_runtime/model.py` | Проверка строгой конфигурации Pydantic-моделей на runtime boundary. |
+| `workflow_container_runtime/retry.py` | Неизменяемая политика низкоуровневых повторов `CodexRunner`. |
+| `workflow_container_runtime/verification.py` | Transient `VerificationDecision`, связанный с публикацией результата `VerificationResult`, канонический SHA-256 и revision contract. |
+| `workflow_container_runtime/workflow/base.py` | `WorkflowBase`, `WorkflowResultValidationError`, публикация workflow и восстановление. |
+| `workflow_container_runtime/workflow/context.py` | `WorkflowExecutionContext` и построение контекстов дочерних workflow и шагов. |
+| `workflow_container_runtime/step/base.py` | `StepResultValidationError`, `WorkflowStepBase`, `WorkflowStepDeterministicBase` и `WorkflowStepCodexBase`. |
+| `workflow_container_runtime/step/browser.py` | `BrowsingError` и `BrowserActionResult`. |
+| `workflow_container_runtime/step/context.py` | `WorkflowStepExecutionContext`. |
+| `workflow_container_runtime/step/codex.py` | `WorkflowStepCodexConfig` и `WorkflowStepCodexState`. |
+| `workflow_container_runtime/step/file.py` | Стандартные имена файлов и path helpers. |
+| `workflow_container_runtime/prompt/renderer.py` | `PromptRenderer` и общие каталоги шаблонов. |
+| `workflow_container_runtime/artifact/materializer.py` | `ArtifactMaterializationPolicy` и `ArtifactMaterializer`. |
+| `workflow_container_runtime/state/sqlite.py` | `state_database_path_get`, `SqliteStateTable`, `SqliteStateStore`, `SqliteStateReader`, `SqliteStateCommand` и общие module-private codec mechanics SQLite current state. |
+| `workflow_container_runtime/artifact/writer.py` | `JsonArtifactWriter`. |
+
+Конкретные контейнеры содержат конкретные подклассы и предметное поведение. Метод-обертка DBOS создает `InputSourceT`, вызывает `run(...)` конкретного шага и возвращает тот же `ResultT`.
+
+Публичный пакет `workflow_container_runtime/stage/**`, перенаправляющие импорты, API совместимости жизненного цикла и псевдонимы моделей в канонической структуре отсутствуют.

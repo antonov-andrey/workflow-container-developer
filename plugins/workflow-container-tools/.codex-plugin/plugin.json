@@ -1,6 +1,6 @@
 {
   "name": "workflow-container-tools",
-  "version": "0.1.0+codex.20260708134344",
+  "version": "0.1.0+codex.20260711170558",
   "description": "Codex skills for authoring and auditing workflow-container projects.",
   "author": {
     "name": "Andrey Antonov",
@@ -25,7 +25,7 @@
     ],
     "defaultPrompt": [
       "Audit this workflow-container project.",
-      "Help me design a workflow-container stage.",
+      "Help me design a workflow-container step.",
       "Review workflow-container boundaries."
     ]
   }
