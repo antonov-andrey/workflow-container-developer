@@ -27,19 +27,21 @@ Instruction-bearing artifacts include:
 - verification prompts;
 - validator instructions;
 - recovery instructions;
+- public input schemas, workflow and run configuration contracts, and input migration instructions;
 - workflow documentation that defines behavior.
 
 ## Semantic Review Workflow
 
-Use one audit order: role detection -> terminology and identity review -> minimality review -> runtime boundary review -> persistence and recovery review -> prompt refactor gate -> domain findings.
+Use one audit order: role detection -> terminology and identity review -> minimality review -> public input review -> runtime boundary review -> persistence and recovery review -> prompt refactor gate -> domain findings.
 
 1. role detection: determine whether each artifact is a boundary contract, workflow sequence, FSM/retry/recovery procedure, generated or persisted data handler, external-source handler, verification guidance, or checking guidance.
 2. terminology and identity review: require every workflow, step, attempt, result, state and artifact reference to use the canonical role from `1.3. Основные термины`.
 3. minimality review: apply `Minimality Review` before reporting domain-level wording or behavior findings.
-4. runtime boundary review: apply `Runtime Boundary Review` to public classes, DBOS methods, validators, handoffs, `result.json`/`verification.json` ownership and container execution.
-5. persistence and recovery review: apply `Persistence And Recovery Review` to artifact trees, incremental state, atomic publication, restart and retry-layer ownership.
-6. prompt refactor gate: apply `Prompt Refactor Gate` before narrower domain findings for prompt templates.
-7. domain findings: report remaining role-specific semantic findings after the earlier gates. Use these role criteria:
+4. public input review: apply `Public Input Review` to `WorkflowInputT`, `input.schema.json`, Workflow/WorkflowRun snapshots, step config routing and input migrations.
+5. runtime boundary review: apply `Runtime Boundary Review` to public classes, DBOS methods, validators, handoffs, `result.json`/`verification.json` ownership and container execution.
+6. persistence and recovery review: apply `Persistence And Recovery Review` to artifact trees, incremental state, atomic publication, restart and retry-layer ownership.
+7. prompt refactor gate: apply `Prompt Refactor Gate` before narrower domain findings for prompt templates.
+8. domain findings: report remaining role-specific semantic findings after the earlier gates. Use these role criteria:
    - boundary contracts must make inputs, outputs, ownership, and forbidden behavior clear;
    - stateful processes must have explicit states and transitions;
    - linear procedures must have an unambiguous step sequence;
@@ -69,19 +71,39 @@ Do not report one minimal public routing decision as duplicated SQLite state whe
 
 Keep the finding scoped to the changed or directly affected boundary. Do not ask for unrelated broad refactoring unless the duplicated contract crosses that boundary and prevents a correct fix.
 
+## Public Input Review
+
+Use `2.3. Исходные контракты и версии`, `2.4. Публичный вход и форма настроек`, `2.5. Миграция публичного входа`, `3.1. Протоколы типов`, and `5.4. Маршрутизация prompt` from `../workflow-container-developer/references/workflow-container-authoring.md` as the public-input source of truth.
+
+Report a public-input finding when one artifact:
+
+- separates request and run settings into independently persisted payloads instead of one concrete `WorkflowInputT`;
+- stores a partial patch, applies runtime merge precedence, or relies on a missing-field default after the full input has been saved;
+- defines `step_map` as an arbitrary mapping, adds empty config objects for steps without settings, or gives a non-concurrent step a `concurrency` field;
+- copies workflow or step config into step `input.json` instead of storing `workflow_input_path` and passing the exact selected config as a DBOS-recorded argument;
+- keeps model, reasoning, correction limit, concurrency, or user instructions in a constructor-owned runtime config or lets action and verifier use different model settings;
+- fails to make both workflow-level and current-step instructions visible to both action and verifier with the precedence owned by `5.4. Маршрутизация prompt`;
+- accepts a model or reasoning value outside the exact enums declared by the config base classes;
+- generates UI or skill questions from a schema other than the immutable schema snapshot of the selected `WorkflowSourceVersion`;
+- imports only part of an input object, merges imported JSON into current form state, or validates only the changed fragment instead of the complete object;
+- changes the public input incompatibly without a new contract version, declares an ambiguous migration graph, mutates the source file during migration, or skips validation against the target schema;
+- lets `workflow-container-input-create` launch the workflow or mutate marketplace state instead of producing one complete validated file.
+
 ## Runtime Boundary Review
 
-Use `2. Архитектура экосистемы`, `3.1. Протоколы типов`, `3.2. Контексты выполнения и состояние Codex`, `3.3. Иерархия классов`, `3.4. Граница DBOS`, `5.1. Жизненный цикл workflow`, `5.2. Детерминированный шаг`, `5.3. FSM шага Codex`, `5.4. Маршрутизация prompt`, `5.5. Результат проверки`, `5.6. Классификация ошибок и повторов`, `6.2. Результат workflow`, `7. Среда выполнения`, and `Приложение A. Публичные интерфейсы` from `../workflow-container-developer/references/workflow-container-authoring.md` as the runtime-boundary source of truth.
+Use `2. Архитектура экосистемы`, `3.1. Протоколы типов`, `3.2. Контексты выполнения и состояние Codex`, `3.3. Иерархия классов`, `3.4. Граница DBOS`, `5.1. Жизненный цикл workflow`, `5.2. Детерминированный шаг`, `5.3. FSM шага Codex`, `5.4. Маршрутизация prompt`, `5.5. Результат проверки`, `5.6. Классификация ошибок и повторов`, `6.2. Результат workflow`, `7. Среда выполнения`, and `Приложение A. Публичные интерфейсы` from `../workflow-container-developer/references/workflow-container-authoring.md` as the runtime-boundary source of truth. Public input ownership is audited only through `Public Input Review`; do not restate it here.
 
 Report a runtime-boundary finding when one artifact:
 
 - uses workflow, step, action, verification or attempt as interchangeable owners;
 - keeps `WorkflowBase` as an empty marker, makes `WorkflowStepBase` inherit from `WorkflowBase`, or preserves incompatible hook signatures between deterministic and Codex step types;
 - stores invocation input, execution paths, attempt state or results in reusable DBOS or step instance fields;
-- relies on Codex CLI or user configuration defaults for model selection or reasoning effort, or lets individual steps choose them instead of injecting one explicit `CodexRunnerConfig` from the container composition root;
-- treats a semantic step helper as a DBOS method owner or executes its external IO outside a synchronous `@DBOS.step` wrapper call;
+- lets `CodexRunner` retain model or reasoning between calls, omits explicit per-call `CodexRunnerConfig`, or uses different model settings for action and verifier in one attempt;
+- treats a semantic step helper as a DBOS method owner or executes external IO outside a checkpointed DBOS step; ordinary steps use a synchronous `@DBOS.step` wrapper, while concurrent-capable steps use the inherited bounded `DBOS.run_step_async` path;
+- implements concurrent-capable step scheduling outside `WorkflowStepCodexConcurrentBase`, changes DBOS queue configuration per run, returns results in completion order, or makes the reported failure depend on task completion order;
+- accepts a concurrent invocation batch spanning different run roots or workflow inputs, or permits duplicate or out-of-run step instance directories;
 - lets concrete steps override runtime-owned `run(...)` or lifecycle dispatch instead of implementing only declared domain hooks;
-- builds `InputT` outside `input_build(input_source)` or gives one step a parallel input channel for the same domain data;
+- builds `InputT` outside `input_build(execution_context, input_source)` or gives one step a parallel input channel for the same domain data;
 - builds `InputSourceT` from previous private state instead of public workflow input, successful results and declared artifact handles;
 - performs filesystem, network, Codex or other external IO directly in a DBOS workflow method;
 - lets concrete code write standard workflow or step files instead of runtime-owned lifecycle;

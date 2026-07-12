@@ -1,6 +1,6 @@
 {
   "name": "workflow-container-tools",
-  "version": "0.1.0+codex.20260711170558",
+  "version": "0.1.0+codex.20260712113623",
   "description": "Codex skills for authoring and auditing workflow-container projects.",
   "author": {
     "name": "Andrey Antonov",
