@@ -1,6 +1,6 @@
 # Workflow Container Developer
 
-`workflow-container-developer` is a Codex plugin marketplace source for workflow-container authoring and audit skills.
+`workflow-container-developer` is a Codex plugin marketplace source for workflow-container authoring, audit, and input-creation skills.
 
 ```text
 workflow-container-developer/
@@ -18,12 +18,16 @@ workflow-container-developer/
           SKILL.md
           references/
             workflow-container-authoring.md
+        workflow-container-input-create/
+          SKILL.md
+          references/
+            input-workflow.md
   workflow_container_developer/
 ```
 
-The marketplace name is `workflow-container-tools`. The installable plugin is `workflow-container-tools`. Current skills inside that plugin are `workflow-container-developer` and `workflow-container-audit`. Future workflow-container skills should be added under the same plugin at `plugins/workflow-container-tools/skills/`.
+The marketplace name is `workflow-container-tools`. The installable plugin is `workflow-container-tools`. Current skills inside that plugin are `workflow-container-audit`, `workflow-container-developer`, and `workflow-container-input-create`. Future workflow-container skills should be added under the same plugin at `plugins/workflow-container-tools/skills/`.
 
-The repository also contains optional Python CLI helper code for local project discovery while developing this plugin and adjacent workflow-container projects. Codex plugin installation does not install that Python CLI. Concrete workflow logic stays in the target workflow-container project, and semantic instruction review stays in the `workflow-container-audit` skill.
+The repository also contains optional Python CLI helper code for local project discovery while developing this plugin and adjacent workflow-container projects. Codex plugin installation does not install that Python CLI. Concrete workflow logic stays in the target workflow-container project, semantic instruction review stays in `workflow-container-audit`, and interactive complete input preparation stays in `workflow-container-input-create`.
 
 ## Local Plugin Install
 
