@@ -1,6 +1,6 @@
 # Workflow Container Developer
 
-`workflow-container-developer` is a Codex plugin marketplace source for workflow-container authoring, audit, and input-creation skills.
+`workflow-container-developer` is a Codex plugin marketplace source for generic design and goal brainstorming plus workflow-container authoring, audit, and input-creation skills.
 
 ```text
 workflow-container-developer/
@@ -12,6 +12,10 @@ workflow-container-developer/
       .codex-plugin/
         plugin.json
       skills/
+        goal-brainstorm/
+          SKILL.md
+          references/
+            specification-contract.md
         workflow-container-audit/
           SKILL.md
         workflow-container-developer/
@@ -25,9 +29,9 @@ workflow-container-developer/
   workflow_container_developer/
 ```
 
-The marketplace name is `workflow-container-tools`. The installable plugin is `workflow-container-tools`. Current skills inside that plugin are `workflow-container-audit`, `workflow-container-developer`, and `workflow-container-input-create`. Future workflow-container skills should be added under the same plugin at `plugins/workflow-container-tools/skills/`.
+The marketplace name is `workflow-container-tools`. The installable plugin is `workflow-container-tools`. Current skills inside that plugin are `goal-brainstorm`, `workflow-container-audit`, `workflow-container-developer`, and `workflow-container-input-create`. Future workflow-container skills should be added under the same plugin at `plugins/workflow-container-tools/skills/`.
 
-The repository also contains optional Python CLI helper code for local project discovery while developing this plugin and adjacent workflow-container projects. Codex plugin installation does not install that Python CLI. Concrete workflow logic stays in the target workflow-container project, semantic instruction review stays in `workflow-container-audit`, and interactive complete input preparation stays in `workflow-container-input-create`.
+The repository also contains optional Python CLI helper code for local project discovery while developing this plugin and adjacent workflow-container projects. Codex plugin installation does not install that Python CLI. Generic design clarification, document selection, specification and goal authoring, and optional persistent-goal activation stay in `goal-brainstorm`; concrete workflow logic stays in the target workflow-container project; semantic instruction review stays in `workflow-container-audit`; and interactive complete input preparation stays in `workflow-container-input-create`.
 
 ## Local Plugin Install
 

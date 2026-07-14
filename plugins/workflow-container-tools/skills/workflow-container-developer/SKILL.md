@@ -5,7 +5,7 @@ description: Use when developing, auditing, refactoring, or reviewing workflow-c
 
 # Workflow Container Developer
 
-Use this skill for workflow-container ecosystem work. The ecosystem includes concrete workflow containers, `workflow-container-contract`, `workflow-container-runtime`, `browser-vpn-runtime`, developer-only guidance, semantic audit and input-creation skills, and optional local discovery CLI.
+Use this skill for workflow-container ecosystem work. The ecosystem includes concrete workflow containers, `workflow-container-contract`, `workflow-container-runtime`, `browser-vpn-runtime`, developer-only guidance, semantic audit and input-creation skills, the generic `goal-brainstorm` documentation skill, and optional local discovery CLI.
 
 ## Workflow
 
@@ -22,6 +22,7 @@ Use this skill for workflow-container ecosystem work. The ecosystem includes con
    - generic runtime code and generic prompt partials stay in `workflow-container-runtime`,
    - browser/VPN process launch and profile handling stay in `browser-vpn-runtime`,
    - developer-only guidance and audit tooling stay in this plugin/repository,
+   - the generic `goal-brainstorm` skill stays in this plugin while it is incubated and owns only design clarification, document selection, specification and goal authoring, and optional persistent-goal activation,
    - the interactive `workflow-container-input-create` skill stays in this plugin and creates or migrates one complete validated `input.json` without launching a workflow or mutating marketplace state.
 4. When writing or rewriting one workflow-container prompt or instruction artifact:
    - identify the artifact role before writing it,
