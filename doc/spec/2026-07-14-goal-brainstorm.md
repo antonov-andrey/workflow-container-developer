@@ -155,13 +155,13 @@ plugins/workflow-container-tools/skills/goal-brainstorm/
 
 `SKILL.md` владеет interaction workflow, capability matrix и terminal behavior. `references/specification-contract.md` владеет выбором owner-документов, форматами spec/goal, verification design и semantic self-review. Скрипты не добавляются: решения зависят от семантики проекта, а не от механического преобразования.
 
-Skill должен поддерживать explicit invocation. Plugin metadata, `workflow-container-developer/AGENTS.md` и developer skill обновляются так, чтобы новый skill был видимым, но не становился workflow-container-specific owner.
+Skill должен поддерживать explicit invocation. Plugin metadata, `workflow-container-tools/AGENTS.md` и skill `workflow-container-developer` обновляются так, чтобы новый skill был видимым, но не становился workflow-container-specific owner.
 
 ## Миграция
 
 После добавления и проверки `goal-brainstorm`:
 
-- физически удаляются существующие каталоги с устаревшими Superpowers plans/specs в `brand-size-chart`, `browser-vpn-runtime`, `marketplace-automation`, `marketplace-tr-priority` и `workflow-container-developer`;
+- физически удаляются существующие каталоги с устаревшими Superpowers plans/specs в `brand-size-chart`, `browser-vpn-runtime`, `marketplace-automation`, `marketplace-tr-priority` и `workflow-container-tools`;
 - `marketplace-tr-priority/.gitignore` начинает игнорировать удалённый каталог;
 - из `marketplace-tr-priority/AGENTS.md` удаляются требования, завязанные на Superpowers lifecycle и устаревшее расположение документации;
 - остальные несвязанные инструкции и исторические git commits сохраняются;

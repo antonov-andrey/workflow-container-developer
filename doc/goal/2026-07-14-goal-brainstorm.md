@@ -7,7 +7,7 @@
 ## Source Contracts
 
 - `doc/spec/2026-07-14-goal-brainstorm.md`: полный целевой контракт skill, интеграции, миграции и acceptance criteria.
-- `AGENTS.md`: ограничения repository `workflow-container-developer` и plugin ownership.
+- `AGENTS.md`: ограничения repository `workflow-container-tools` и plugin ownership.
 - `/home/andrey/Projects/marketplace-tr-priority/AGENTS.md`: действующие repository constraints и устаревшие правила, которые спецификация требует удалить.
 
 ## Constraints
