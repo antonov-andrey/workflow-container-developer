@@ -181,6 +181,8 @@ Schema `default` является только аннотацией началь
 
 Формы `Workflow` и `WorkflowRun` импортируют и экспортируют только полный `input.json`. Импорт заменяет текущий объект формы и не выполняет merge. Frontend использует готовый Draft 2020-12 validator; backend повторяет validation через `workflow-container-contract`; контейнер окончательно разбирает тот же объект как concrete `WorkflowInputT` до начала DBOS workflow.
 
+Контейнер разбирает внешний JSON через `model_validate_json(...)`, а сериализует JSON через `model_dump(mode="json")` или `model_dump_json(...)`. `model_validate(...)` и обычный конструктор используются только для уже типизированных Python-значений точной внутренней формы. Строгая модель не добавляет скрытые преобразования изменяемых JSON carriers во внутренние неизменяемые carriers только ради поддержки неправильного Python call site.
+
 ### 2.5. Миграция публичного входа
 `WorkflowVersionDefinition.input_migration_list` загружается из `input_migrations` в `versions.yaml` и содержит `WorkflowInputMigrationDefinition` с `from_version`, `to_version` и безопасным относительным `script_path`. Соответствующий фрагмент файла выглядит так:
 
@@ -268,7 +270,7 @@ WorkflowStepCodexConcurrentConfigT = TypeVar(
 
 `WorkflowExecutionContext.for_step(step_instance_key=..., runtime_capability=...)` детерминированно создает `WorkflowStepExecutionContext` для дочернего шага и устанавливает `workflow_input_path` в result-relative путь текущего workflow `input.json`. Конкретный workflow передает только набор возможностей, объявленный для этого шага. Аналогичный метод общей среды выполнения создает контекст дочернего workflow. Эти операции не выполняют внешний ввод-вывод.
 
-`WorkflowExecutionContext`, `WorkflowStepExecutionContext`, `WorkflowRuntimeCapability`, вложенные модели возможностей, `CodexRunnerConfig`, `WorkflowStepCodexRuntimePolicy` и все публичные config-модели неизменяемы после создания. `WorkflowStepCodexConfigBase` требует model из `gpt-5.6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, reasoning из `low`, `medium`, `high`, `xhigh`, `max`, явный `correction_attempt_limit >= 0`, явную `instruction` и явные nullable-поля `mcp_playwright_profile` и `mcp_playwright_profile_source`. Пустая instruction является значением, а не отсутствующим полем. `correction_attempt_limit` считает только исправляющие попытки после первой action-попытки. `WorkflowStepCodexConcurrentConfigBase` дополнительно требует `concurrency >= 1`.
+`WorkflowExecutionContext`, `WorkflowStepExecutionContext`, `WorkflowRuntimeCapability`, вложенные модели возможностей, `CodexRunnerConfig`, `WorkflowStepCodexRuntimePolicy` и все публичные config-модели неизменяемы после создания. `WorkflowStepCodexConfigBase` требует model из `gpt-5.6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, reasoning из `low`, `medium`, `high`, `xhigh`, `max`, явный `correction_attempt_limit >= 0`, явную `instruction` и явные nullable-поля `mcp_playwright_profile` и `mcp_playwright_profile_source`. Пустая instruction является значением, а не отсутствующим полем. `correction_attempt_limit` считает только исправляющие попытки после первой action-попытки. `WorkflowStepCodexConcurrentConfigBase` дополнительно требует `concurrency >= 1`. Конфигурация является единственным владельцем детерминированного списка физических target-профилей: `mcp_playwright_profile_physical_list_get()` возвращает одиночный target, изолированные значения или фиксированные имена lanes, а validation до запуска workflow проверяет сгенерированные имена и отсутствие совпадения source с одним из них.
 
 `CodexRunner` не закрепляет model и reasoning в конструкторе. `WorkflowStepCodexBase` получает exact config текущего вызова от concrete workflow и передает построенный `CodexRunnerConfig` в action и verifier. Оба вызова одной попытки используют одинаковые model и reasoning. Runtime не читает model из Codex user config и не применяет fallback. `correction_attempt_limit` ограничивает общую correction FSM; `WorkflowStepCodexRuntimePolicy.execution_retry_policy` отдельно ограничивает низкоуровневые инфраструктурные повторы одного вызова.
 
@@ -1021,7 +1023,7 @@ Private input монтируется только для чтения в `/input
 
 Процесс workflow, установка зависимостей, DBOS и Codex используют обычный сетевой путь. Только `vpn-egress` gateway владеет OpenVPN, `tun0` и его сетевым namespace. Playwright работает в отдельном namespace, обращается к gateway через SOCKS и предоставляет workflow готовый MCP URL.
 
-Обратную запись выполняет владелец платформы только для объявленных изменяемых префиксов входа. Snapshot создается во временном соседнем каталоге, права владельца применяются к временному дереву, затем дерево атомарно заменяет target. После публикации права не изменяются. Каждая S3-публикация создает новую версию и новый manifest; текущей становится последняя успешно опубликованная версия. Между разными запусками не вводятся compare-and-swap, writer lease или искусственный conflict поверх существующих версий и manifest.
+Обратную запись выполняет владелец платформы только для объявленных изменяемых префиксов входа. Snapshot создается во временном соседнем каталоге и атомарно заменяет target; доступ к обоим путям заранее задается владельцем run-local volume и процессом browser runtime, поэтому snapshot API не принимает UID/GID и не меняет права после публикации. Каждая S3-публикация создает новую версию и новый manifest; текущей становится последняя успешно опубликованная версия. Между разными запусками не вводятся compare-and-swap, writer lease или искусственный conflict поверх существующих версий и manifest.
 
 Docker Compose и Kubernetes реализуют одинаковые правила монтирования, сети, локальной копии внутри pod и обратной записи. Bind mount, пригодный только для разработки, или общий сетевой namespace VPN не является production-контрактом.
 
@@ -1131,10 +1133,10 @@ WorkflowRunStatus = Literal["created", "working", "done", "failed", "cancelled"]
 
 class McpPlaywrightProfileWritebackPolicy(BaseModel):
     mcp_playwright_profile_name_prefix: str
-    workflow_run_status_list: list[WorkflowRunStatus]
+    workflow_run_status_list: tuple[WorkflowRunStatus, ...]
 ```
 
-Оба поля policy обязательны. Пустой `mcp_playwright_profile_name_prefix` означает отсутствие фильтра, а пустой `workflow_run_status_list` отключает writeback. Список статусов не содержит повторов или `created`.
+Оба поля policy обязательны. Пустой `mcp_playwright_profile_name_prefix` означает отсутствие фильтра, а пустой `workflow_run_status_list` отключает writeback. JSON представляет статусы массивом, а валидированная модель хранит их неизменяемым `tuple` без повторов и `created`.
 
 В следующих фрагментах используются эти стандартные импорты:
 
@@ -1142,8 +1144,8 @@ class McpPlaywrightProfileWritebackPolicy(BaseModel):
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Mapping
-from contextlib import AbstractContextManager
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import ClassVar, Generic, Literal, Self, TypeVar, final
 
@@ -1264,6 +1266,9 @@ class WorkflowStepCodexConfigBase(BaseModel):
         title="Reasoning effort",
     )
 
+    def mcp_playwright_profile_physical_list_get(self) -> list[str | None]:
+        ...
+
 
 class WorkflowStepCodexConcurrentConfigBase(WorkflowStepCodexConfigBase):
     concurrency: int = Field(
@@ -1272,6 +1277,9 @@ class WorkflowStepCodexConcurrentConfigBase(WorkflowStepCodexConfigBase):
         json_schema_extra={"default": 1},
         title="Concurrency",
     )
+
+    def mcp_playwright_profile_physical_list_get(self) -> list[str | None]:
+        ...
 
 
 class WorkflowStepCodexRuntimePolicy(BaseModel):
@@ -1455,13 +1463,14 @@ class McpPlaywrightProfileRuntime:
     ) -> None:
         ...
 
+    @contextmanager
     def lease(
         self,
         *,
         mcp_playwright_profile: str | None,
         mcp_playwright_profile_source: str | None,
         runtime_capability: WorkflowRuntimeCapability,
-    ) -> AbstractContextManager[McpPlaywrightProfileRoute]:
+    ) -> Generator[McpPlaywrightProfileRoute]:
         ...
 
     def writeback_candidate_publish(self, route: McpPlaywrightProfileRoute) -> None:
