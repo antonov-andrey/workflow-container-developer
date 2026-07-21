@@ -30,7 +30,7 @@ Use this skill for workflow-container ecosystem work. The ecosystem includes con
    - apply `6.1. Минимальный стабильный контракт` before introducing or changing data objects, result payloads, typed step input, state files, artifact handles, validators, or handoff payloads,
    - keep request and all run-owned settings in one concrete `WorkflowInputT`; do not add a second settings payload, runtime merge chain, hidden default, arbitrary step-config map, or copied step config,
    - choose the appropriate instruction form from `6.3. Правила prompt`,
-   - write exact inputs, outputs, state boundaries, and terminal behavior when the artifact defines a boundary,
+   - write exact inputs, outputs, state boundaries, and completion behavior when the artifact defines a boundary,
    - write state transitions explicitly when the artifact contains retries, verification loops, blocked states, or recovery,
    - use `4.5. Инкрементальные данные` when significant structured collections are produced item by item,
    - use `5.7. Атомарная публикация и восстановление` for atomic publication, exact snapshot validation, restart, and digest/revision-bound `result.json`/`verification.json` pairing,

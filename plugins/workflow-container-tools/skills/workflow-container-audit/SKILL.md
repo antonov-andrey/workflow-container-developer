@@ -73,7 +73,7 @@ Keep the finding scoped to the changed or directly affected boundary. Do not ask
 
 ## Public Input Review
 
-Use `2.3. Исходные контракты и версии`, `2.4. Публичный вход и форма настроек`, `2.5. Миграция публичного входа`, `3.1. Протоколы типов`, `3.2. Контексты выполнения и состояние Codex`, `5.4. Маршрутизация prompt`, and `7.3. Browser runtime` from `../workflow-container-developer/references/workflow-container-authoring.md` as the public-input source of truth.
+Use `2.3. Исходные контракты и версии`, `2.4. Публичный вход и форма настроек`, `2.5. Миграция публичного входа`, `2.6. Платформенный интерфейс, сборка и проверка`, `3.1. Протоколы типов`, `3.2. Контексты выполнения и состояние Codex`, `5.4. Маршрутизация prompt`, `7.1. Контейнер, секреты и writeback`, and `7.3. Browser runtime` from `../workflow-container-developer/references/workflow-container-authoring.md` as the public-input source of truth.
 
 Report a public-input finding when one artifact:
 
@@ -88,7 +88,8 @@ Report a public-input finding when one artifact:
 - generates UI or skill questions from a schema other than the immutable schema snapshot of the selected `WorkflowSourceVersion`;
 - imports only part of an input object, merges imported JSON into current form state, or validates only the changed fragment instead of the complete object;
 - changes the public input incompatibly without a new contract version, declares an ambiguous migration graph, mutates the source file during migration, or skips validation against the target schema;
-- lets `workflow-container-input-create` launch the workflow or mutate marketplace state instead of producing one complete validated file.
+- lets `workflow-container-input-create` launch the workflow or mutate marketplace state instead of producing one complete validated file;
+- leaves source-owned Data, secret, dataset, step, or capability declarations outside exact `workflow.yaml`, accepts undeclared manifest keys or non-exact path parameters, or makes `should_wait_athena_projection=false` an implicit default instead of an explicit per-step exception.
 
 ## Runtime Boundary Review
 
@@ -118,10 +119,11 @@ Report a runtime-boundary finding when one artifact:
 - routes runtime prompt paths differently from `5.4. Маршрутизация prompt`;
 - exposes runtime-owned prompt resources without the protected `runtime/` namespace, allows project templates to shadow that namespace, or loads runtime system prompts through unprefixed names;
 - conflates correct partial domain output with runtime failure or derives one status from multiple channels;
-- uses verification status as terminal workflow outcome or workflow status as the acceptance decision for `result.json`;
+- uses verification status as the `WorkflowRun` outcome or workflow status as the acceptance decision for `result.json`;
 - uses a JSON carrier name that disagrees with its actual serialized-text, validated-model or boundary-payload role;
 - changes a public contract without the version boundary owned by `2.3. Исходные контракты и версии`;
 - places workflow/Codex in the browser VPN namespace, uses writable input secrets, or gives Docker Compose and Kubernetes different execution semantics;
+- appends platform CLI arguments, omits one standard major-2 environment value, duplicates `WorkflowRunContext` provenance in another payload, lets one context change `WorkflowDataPath` between workflow and step, or builds control requests without the exact saved `WorkflowDefinition`;
 - introduces a custom step runtime that should belong to `workflow-container-runtime`;
 - preserves compatibility aliases, forwarding wrappers or obsolete lifecycle owners after migration.
 
@@ -156,7 +158,7 @@ Report a persistence or recovery finding when one artifact:
 - lets Codex directly or collectively write independently recoverable declared artifacts when the step requires each item to be validated and durably published before advancing, instead of using the owner-defined single-item producer boundary from `4.4. Объявленные артефакты`;
 - materializes external artifacts without prevalidating the complete tree, allows writes to runtime-owned root files or diagnostics, partially copies a rejected tree, or replaces existing targets non-atomically;
 - creates private state when declared artifacts already own all durable progress;
-- publishes browser profile state without the single atomic writeback candidate and `McpPlaywrightProfileWritebackPolicy` from `7.3. Browser runtime`, invents candidate registries or conflict checks over versioned S3 manifests, or lets a DBOS step return before a required `working` writeback completes.
+- publishes browser profile state without the single atomic writeback candidate and `McpPlaywrightProfileWritebackPolicy` from `7.3. Browser runtime`, invents a second candidate registry, omits expected-revision conflict for an overlapping secret writeback, or lets a DBOS step return before a required `working` writeback and owning safepoint complete.
 
 Do not report temporary coexistence of a previous verdict and a newly published result as a defect by itself. That state is crash-safe only because recovery requires both the canonical result digest and the current publication revision.
 
